@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "build": { "command": "npm run build:web" },
+  "build": { "command": "npm run build:web", "watch_dir": ["src", "web"] },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
