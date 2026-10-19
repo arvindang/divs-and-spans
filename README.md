@@ -60,7 +60,7 @@ The server's `instructions` (in `src/mcp.ts`, `CONTRACT`) are the only design gu
 
 ## Canvas keys
 
-`L` pick an element to copy its link (Option-click for its parent) · `Space`+drag or drag empty canvas to pan · pinch or ⌘/Ctrl+scroll to zoom · `Shift+1` fit · `Shift+0` 100% · `F` focus selected frame · `Esc` cancel.
+`L` pick an element to copy its link (Option-click for its parent) · `Space`+drag or drag empty canvas to pan · pinch or ⌘/Ctrl+scroll to zoom · `Shift+1` fit · `Shift+0` 100% · `F` focus selected frame · `H` full height vs one screen · `Esc` cancel.
 
 ## Not in the MVP yet
 

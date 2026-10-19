@@ -34,6 +34,7 @@ let tokensVersion = 0;
 const systemScheme: Scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let themeMode = prefs.get<ThemeMode>("theme", systemScheme);
 let defaultWidth = prefs.get<number>("width", 1440);
+let fullHeight = prefs.get<boolean>("fullHeight", false);
 let picking = false;
 let selectedFrame: string | null = initialFrameId || null;
 let target: { frameId: string; elementId: string } | null = null;
@@ -104,8 +105,31 @@ function onWheel(e: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey
 }
 viewport.addEventListener("wheel", (e) => {
   e.preventDefault();
+  wheelLatch = { to: "canvas", t: performance.now() };
   onWheel(e);
 }, { passive: false });
+
+/**
+ * A wheel gesture sticks to whatever it started on until it pauses, so
+ * scrolling a pane inside a frame never spills over into panning the canvas
+ * (and a canvas pan never gets hijacked by a pane sliding under the cursor).
+ */
+const WHEEL_GESTURE_GAP_MS = 250;
+let wheelLatch: { to: "canvas" | Element; t: number } | null = null;
+
+/** Innermost element under the pointer that can scroll on the wheel's main axis. */
+function scrollerFor(start: Element | null, win: Window, horizontal: boolean): Element | null {
+  for (let el = start; el; el = el.parentElement) {
+    const doc = el.ownerDocument;
+    const root = el === doc.scrollingElement;
+    const size = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+    if (size <= 1) continue;
+    if (root) return el;
+    const style = win.getComputedStyle(el);
+    if (/(auto|scroll|overlay)/.test(horizontal ? style.overflowX : style.overflowY)) return el;
+  }
+  return null;
+}
 
 // drag to pan: on empty canvas, with space held, or middle mouse
 let spaceDown = false;
@@ -154,6 +178,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "=" || e.key === "+") zoomAt(innerWidth / 2, innerHeight / 2, cam.z * 1.25);
   else if (e.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, cam.z / 1.25);
   else if (e.key === "f" && selectedFrame) focusFrame(selectedFrame);
+  else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
   else return;
   e.preventDefault();
 }
@@ -193,6 +218,7 @@ function forEachDoc(fn: (doc: Document, frameId: string, iframe: HTMLIFrameEleme
 }
 
 const PICK_CSS = `
+html { overscroll-behavior: none; }
 html[data-ds-picking] * { cursor: crosshair !important; }
 [data-ds-hover] { outline: 2px solid #6d5dfc !important; outline-offset: -1px !important; }
 [data-ds-target] { outline: 2px solid #f59e0b !important; outline-offset: 2px !important; }
@@ -220,6 +246,25 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
     return { clientX: r.left + e.clientX * k, clientY: r.top + e.clientY * k };
   };
   doc.addEventListener("wheel", (e) => {
+    const zoom = e.ctrlKey || e.metaKey;
+    if (!zoom) {
+      const now = performance.now();
+      if (!wheelLatch || now - wheelLatch.t > WHEEL_GESTURE_GAP_MS) {
+        const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+        wheelLatch = { to: scrollerFor(e.target as Element, win, horizontal) ?? "canvas", t: now };
+      }
+      wheelLatch.t = now;
+      const latched = wheelLatch.to;
+      if (latched !== "canvas") {
+        // the pane under the pointer scrolls natively; nothing reaches the canvas
+        if (latched.contains(e.target as Node)) return;
+        // pointer drifted off the pane mid-gesture: keep scrolling it
+        e.preventDefault();
+        const k = e.deltaMode === 1 ? 16 : 1;
+        latched.scrollBy(e.deltaX * k, e.deltaY * k);
+        return;
+      }
+    }
     e.preventDefault();
     const p = toParent(e);
     onWheel({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, ...p });
@@ -276,6 +321,9 @@ function setTarget(t: typeof target, focus: boolean) {
   });
   if (focus && found) {
     const { el, iframe } = found as { el: Element; iframe: HTMLIFrameElement };
+    // bring it into view inside the frame; scrollIntoView also scrolls the canvas page, so undo that
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    viewport.scrollTop = viewport.scrollLeft = 0;
     const fr = worldRectOf(iframe);
     const er = el.getBoundingClientRect();
     const pad = 120;
@@ -336,8 +384,7 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: n
   next.dataset.loading = "";
   next.style.cssText = `position:absolute;inset:0 auto auto 0;width:${width}px;height:${vh}px;opacity:0;color-scheme:${scheme}`;
   next.addEventListener("load", () => {
-    const doc = next.contentDocument;
-    const h = Math.min(12000, Math.max(vh, doc?.documentElement.scrollHeight ?? vh));
+    const h = frameHeight(next, width);
     next.style.cssText = `width:${width}px;height:${h}px;color-scheme:${scheme}`;
     delete next.dataset.loading;
     current?.remove();
@@ -349,6 +396,42 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: n
   }, { once: true });
   next.src = src;
   screen.prepend(next);
+}
+
+/** Screen mode shows one device viewport and the document scrolls inside; full height grows to the content. */
+function frameHeight(iframe: HTMLIFrameElement, width: number) {
+  const vh = viewportHeightFor(width);
+  if (!fullHeight) return vh;
+  iframe.style.height = `${vh}px`; // measure at device height so 100vh layouts don't feed back
+  return Math.min(12000, Math.max(vh, iframe.contentDocument?.documentElement.scrollHeight ?? vh));
+}
+
+/** Resize loaded frames in place (width or height mode changed) without reloading them. */
+function resizeScreens() {
+  for (const [id, el] of frameEls) {
+    const f = frames.get(id);
+    if (!f) continue;
+    const width = widthOf(f);
+    for (const screen of el.querySelectorAll<HTMLElement>(".screen")) {
+      screen.style.width = `${width}px`;
+      const iframe = screen.querySelector<HTMLIFrameElement>("iframe:not([data-loading])");
+      if (!iframe) {
+        screen.style.height = `${viewportHeightFor(width)}px`;
+        continue;
+      }
+      iframe.style.width = `${width}px`;
+      const h = frameHeight(iframe, width);
+      iframe.style.height = screen.style.height = `${h}px`;
+    }
+    syncPairHeights(id);
+  }
+}
+
+function setFullHeight(on: boolean) {
+  fullHeight = on;
+  prefs.set("fullHeight", on);
+  $("#fullBtn").setAttribute("aria-pressed", String(on));
+  resizeScreens();
 }
 
 /** In "both" mode keep light and dark screens the same height. */
@@ -456,9 +539,11 @@ widthSel.value = String(defaultWidth);
 widthSel.addEventListener("change", () => {
   defaultWidth = Number(widthSel.value);
   prefs.set("width", defaultWidth);
-  for (const el of frameEls.values()) el.querySelectorAll<HTMLElement>(".screen").forEach((s) => (s.style.height = ""));
   renderAll();
+  resizeScreens();
 });
+$("#fullBtn").setAttribute("aria-pressed", String(fullHeight));
+$("#fullBtn").addEventListener("click", () => setFullHeight(!fullHeight));
 $("#fitBtn").addEventListener("click", fitAll);
 $("#zoomLabel").addEventListener("click", () => zoomAt(innerWidth / 2, innerHeight / 2, 1));
 
