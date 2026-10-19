@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "divs-and-spans",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "build": { "command": "npm run build:web" },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/f/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "DESIGN_FILES", "class_name": "DesignFile" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DesignFile"] }],
+  "observability": { "enabled": true }
+}

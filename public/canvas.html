@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Divs &amp; Spans</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="viewport" id="viewport">
+  <div class="world" id="world"></div>
+</div>
+
+<header class="bar">
+  <div class="group">
+    <a class="brand" href="/" title="All files"><span class="brand-mark">&lt;/&gt;</span><span class="hide-sm">Divs &amp; Spans</span></a>
+    <div class="sep"></div>
+    <input class="file-name" id="fileName" aria-label="File name" spellcheck="false">
+    <span class="status-dot" id="liveDot" title="Connecting…"></span>
+  </div>
+  <div class="spacer"></div>
+  <div class="group">
+    <button class="btn" id="pickBtn" aria-pressed="false" title="Pick an element to copy its link">Link<span class="hide-sm">element</span> <kbd class="hide-sm">L</kbd></button>
+    <div class="sep hide-sm"></div>
+    <button class="btn hide-sm" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
+    <button class="btn hide-sm" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
+    <button class="btn hide-sm" data-theme-mode="both" aria-pressed="false" title="Light and dark side by side">Both</button>
+    <div class="sep hide-sm"></div>
+    <select class="btn hide-sm" id="widthSel" aria-label="Default frame width">
+      <option value="1440">Desktop 1440</option>
+      <option value="1024">Laptop 1024</option>
+      <option value="834">Tablet 834</option>
+      <option value="390">Mobile 390</option>
+    </select>
+  </div>
+  <div class="group">
+    <button class="btn" id="fitBtn" title="Zoom to fit (Shift+1)">Fit</button>
+    <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0)">100%</button>
+  </div>
+  <div class="group">
+    <button class="btn primary" id="connectBtn">Connect</button>
+  </div>
+</header>
+
+<section class="pop" id="connectPop" hidden>
+  <h3>1 · Add the MCP server once</h3>
+  <p>In Claude: Settings → Connectors → Add custom connector. Other clients take the same URL (Streamable HTTP).</p>
+  <div class="field"><input id="mcpUrl" readonly><button class="btn" data-copy="mcpUrl">Copy</button></div>
+  <h3>2 · Point your chat at this file</h3>
+  <p>Paste the file link with a task. Element links work too — press <b>L</b> and click anything.</p>
+  <div class="field"><input id="fileUrl" readonly><button class="btn" data-copy="fileUrl">Copy</button></div>
+  <pre class="prompt" id="promptEx"></pre>
+  <div class="field" style="margin:0"><a class="btn" id="tokensLink" target="_blank" rel="noopener">View tokens.css ↗</a></div>
+</section>
+
+<div class="empty" id="empty" hidden>
+  <div class="empty-card">
+    <h2>An empty canvas</h2>
+    <p>Nothing here yet. Connect your LLM, paste this file's link, and ask for a screen. Frames appear here as they're being designed.</p>
+    <button class="btn primary" id="emptyConnect">Connect an LLM</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/js/canvas.js"></script>
+</body>
+</html>

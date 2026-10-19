@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Divs &amp; Spans</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main class="home">
+  <div class="home-card">
+    <h1>Divs &amp; Spans <span>&lt;/&gt;</span></h1>
+    <p>Visual markdown for UI. Your LLM writes the HTML and CSS, the canvas renders it, and you point at things with links.</p>
+    <form id="newForm">
+      <input name="name" placeholder="New design file name" aria-label="File name" autocomplete="off">
+      <button class="btn primary" type="submit">Create</button>
+    </form>
+    <h3 id="recentHead" hidden>Recent</h3>
+    <ul class="recent" id="recent"></ul>
+    <h3>MCP server</h3>
+    <div class="field"><input id="mcpUrl" readonly><button class="btn" data-copy="mcpUrl">Copy</button></div>
+  </div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/js/home.js"></script>
+</body>
+</html>
