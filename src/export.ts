@@ -19,6 +19,10 @@ const escapeHtml = (s: string) =>
 export const slugify = (s: string) =>
   s.normalize("NFKD").toLowerCase().replace(/[^a-z0-9\s_-]/g, "").trim().replace(/[\s_-]+/g, "-").slice(0, 48);
 
+/** 01-foundations.html: canvas order first, so a folder listing reads like the canvas. */
+export const frameFileName = (f: { id: string; name: string }, i: number, ext: string) =>
+  `${String(i + 1).padStart(2, "0")}-${slugify(f.name) || f.id}.${ext}`;
+
 /** Point <a href="#frame"> links at the exported .html files so flows click through offline. data-to stays as written. */
 async function rewriteFrameLinks(html: string, fileId: string, frameId: string, fileNames: Map<string, string>): Promise<string> {
   const { links, anchors } = linksIn(parse(html, { comment: false }), fileId);
@@ -45,9 +49,7 @@ async function rewriteFrameLinks(html: string, fileId: string, frameId: string, 
  */
 export async function buildExport(input: ExportInput): Promise<{ zip: Uint8Array; filename: string }> {
   const folder = slugify(input.name) || input.id;
-  const fileNames = new Map(
-    input.frames.map((f, i) => [f.id, `${String(i + 1).padStart(2, "0")}-${slugify(f.name) || f.id}.html`]),
-  );
+  const fileNames = new Map(input.frames.map((f, i) => [f.id, frameFileName(f, i, "html")]));
   const fileLink = `${input.origin}/f/${input.id}`;
 
   const files: Record<string, Uint8Array> = {

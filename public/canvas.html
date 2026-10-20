@@ -72,7 +72,7 @@
       <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0)">100%</button>
     </div>
     <div class="group">
-      <a class="btn" id="exportBtn" download title="Download every frame, tokens.css and a README for another agent as a zip (E)">Export <kbd>E</kbd></a>
+      <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code (E) or every frame as PNG (Shift+E)">Export <kbd>E</kbd></button>
       <button class="btn primary" id="connectBtn">Connect</button>
     </div>
   </div>
@@ -87,6 +87,11 @@
   <div class="field"><input id="fileUrl" readonly><button class="btn" data-copy="fileUrl">Copy</button></div>
   <pre class="prompt" id="promptEx"></pre>
   <div class="field" style="margin:0"><a class="btn" id="tokensLink" target="_blank" rel="noopener">View tokens.css ↗</a></div>
+</section>
+
+<section class="pop menu" id="exportPop" hidden>
+  <a class="item" id="exportZip" download>Code &amp; tokens (.zip) <kbd>E</kbd><span>Every frame as .html, tokens.css and a README for another agent</span></a>
+  <button class="item" id="exportPng">All frames as PNG (.zip) <kbd>⇧E</kbd><span>At 2x, as the canvas shows them: device, theme, bezel, height</span></button>
 </section>
 
 <div class="empty" id="empty" hidden>

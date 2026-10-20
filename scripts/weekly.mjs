@@ -75,6 +75,8 @@ const HEADLINES = [
   ["Element links followed", "SUM(_sample_interval)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
   ["Canvases with an element link", "count(DISTINCT index1)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
   ["Exports", "SUM(_sample_interval)", "blob1 = 'export'"],
+  ["PNGs", "SUM(_sample_interval)", "blob1 = 'png'"],
+  ["  rendered (not cached)", "SUM(_sample_interval)", "blob1 = 'png' AND blob5 != 'cached'"],
   ["MCP connects", "SUM(_sample_interval)", "blob1 = 'connect'"],
 ];
 

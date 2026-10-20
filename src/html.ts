@@ -64,13 +64,20 @@ export async function stampElementIds(html: string): Promise<{ html: string; cou
   return { html: out, count };
 }
 
-/** Inject the file's tokens.css (first, so frame styles win) and an optional forced theme. */
+/**
+ * Inject the file's tokens.css (first, so frame styles win) and an optional forced theme.
+ * Screenshots inline the tokens (tokensCss) and set the device's safe areas up front.
+ */
 export async function renderForCanvas(
   html: string,
-  opts: { tokensHref: string; theme?: "light" | "dark" },
+  opts: ({ tokensHref: string } | { tokensCss: string }) & { theme?: "light" | "dark"; safe?: { top: number; bottom: number } },
 ): Promise<string> {
   // safe areas default to 0; the canvas overrides them for the device it's showing
-  const link = `<style data-ds-safe>:root{--ds-safe-top:0px;--ds-safe-bottom:0px}</style><link rel="stylesheet" href="${opts.tokensHref}" data-ds-tokens>`;
+  const safe = `<style data-ds-safe>:root{--ds-safe-top:${opts.safe?.top ?? 0}px;--ds-safe-bottom:${opts.safe?.bottom ?? 0}px}</style>`;
+  const tokens = "tokensCss" in opts
+    ? `<style data-ds-tokens>${opts.tokensCss.replace(/<\/style/gi, "<\\/style")}</style>`
+    : `<link rel="stylesheet" href="${opts.tokensHref}" data-ds-tokens>`;
+  const link = safe + tokens;
   let injected = false;
   const rewriter = new HTMLRewriter()
     .on("head", {

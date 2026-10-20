@@ -11,6 +11,7 @@
     "weekly": "node scripts/weekly.mjs"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "fflate": "^0.8.3",
     "node-html-parser": "^9.0.5",

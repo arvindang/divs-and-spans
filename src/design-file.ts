@@ -231,6 +231,7 @@ export class DesignFile extends DurableObject<Env> {
       id: state.id,
       name: state.name,
       tokens: this.meta("tokens")!,
+      tokensVersion: state.tokensVersion,
       frames: state.frames.filter((f) => html.has(f.id)).map((f) => ({ ...f, html: html.get(f.id)! })),
       flows: (await this.getFlows()).flows,
     };

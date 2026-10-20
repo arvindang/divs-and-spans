@@ -172,5 +172,22 @@ ok(["README.md", "index.html", "tokens.css", "01-00-foundations.html", "02-01-to
 ok(zip["03-02-episode.html"].includes('href="02-01-today.html"') && zip["03-02-episode.html"].includes('href="tokens.css"'), "exported frames link tokens.css and each other");
 ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README lists the flows");
 
+// PNGs: rendered by Browser Run, so this needs the browser binding (local Chromium under wrangler dev)
+const fileId = file_link.split("/").pop();
+const isPng = (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+const pngSize = (b) => [new DataView(b.buffer).getUint32(16), new DataView(b.buffer).getUint32(20)];
+const phone = "w=402&h=874&kind=phone&radius=62&st=62&sb=34&cutout=island&full=0";
+const png = await fetch(`${base}/api/files/${fileId}/frames/${claim.frame_id}/png?${phone}&chrome=0&theme=light`);
+const pngBytes = new Uint8Array(await png.arrayBuffer());
+ok(png.ok && isPng(pngBytes) && pngSize(pngBytes).join("x") === "804x1748", `frame PNG is the device viewport at 2x (${png.status}, ${pngSize(pngBytes).join("x")})`);
+const both = new Uint8Array(await (await fetch(`${base}/api/files/${fileId}/frames/${claim.frame_id}/png?${phone}&chrome=1&theme=both`)).arrayBuffer());
+ok(pngSize(both).join("x") === "1824x1804", `bezel + both themes renders two dressed screens side by side (${pngSize(both).join("x")})`);
+const crop = new Uint8Array(await (await fetch(`${base}/api/files/${fileId}/frames/${claim.frame_id}/png?${phone}&chrome=0&theme=light&el=${btnId}`)).arrayBuffer());
+ok(isPng(crop) && pngSize(crop)[0] < 804, "an element link crops the PNG to that element");
+ok((await fetch(`${base}/api/files/${fileId}/frames/${claim.frame_id}/png?${phone}&el=zzzzzz`)).status === 404, "a missing element is a 404");
+const pz = await fetch(`${base}/api/files/${fileId}/png.zip?${phone}&chrome=0&theme=dark`);
+const pngs = Object.keys(unzipSync(new Uint8Array(await pz.arrayBuffer()))).map((k) => k.split("/").pop());
+ok(pz.headers.get("content-disposition")?.includes('filename="tidal-nocturne-png.zip"') && ["01-00-foundations.png", "02-01-today.png", "03-02-episode.png"].every((n) => pngs.includes(n)), "PNG export zips every frame in canvas order");
+
 console.log(`\nAll good. Open ${withFlows.frames[0].link}`);
 await client.close();
