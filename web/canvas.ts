@@ -168,6 +168,11 @@ function onKey(e: KeyboardEvent, down: boolean) {
     e.preventDefault();
     return;
   }
+  if (down && selectedFrame && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === "KeyL") {
+    copy(frameLink(selectedFrame), "Copied frame link");
+    e.preventDefault();
+    return;
+  }
   if (!down || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if (e.key === "Escape") {
@@ -344,7 +349,7 @@ function buildFrameEl(f: FrameSummary) {
   el.innerHTML = `
     <div class="frame-label">
       <span class="name"></span><span class="meta"></span>
-      <button class="copy" title="Copy frame link">Copy link</button>
+      <button class="copy" title="Copy frame link (⌘L when selected)">Copy link</button>
     </div>
     <div class="frame-body"></div>`;
   el.querySelector(".copy")!.addEventListener("click", (e) => {
