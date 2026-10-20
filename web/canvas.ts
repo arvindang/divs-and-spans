@@ -132,11 +132,13 @@ function focusFrame(id: string) {
 }
 
 // wheel: trackpad scroll pans, pinch / ctrl+wheel zooms
-function onWheel(e: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; clientX: number; clientY: number }) {
+function onWheel(e: { deltaX: number; deltaY: number; deltaMode: number; shiftKey: boolean; clientX: number; clientY: number }, zoom: boolean) {
   const scale = e.deltaMode === 1 ? 16 : 1;
-  if (e.ctrlKey || e.metaKey) {
+  if (zoom) {
     if (pinch) pinch.viaWheel = true;
-    zoomAt(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * scale * 0.01));
+    // a mouse wheel notch is ~100 where a pinch step is a few; cap it so one notch can't jump 3x
+    const dy = Math.min(50, Math.max(-50, e.deltaY * scale));
+    zoomAt(e.clientX, e.clientY, cam.z * Math.exp(-dy * 0.01));
   } else {
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
     const dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
@@ -147,8 +149,10 @@ function onWheel(e: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey
 }
 viewport.addEventListener("wheel", (e) => {
   e.preventDefault();
-  wheelLatch = { to: "canvas", t: performance.now() };
-  onWheel(e);
+  const to = routeWheel(e, () => null);
+  // a frame pane's scroll whose momentum carries the pointer off the frame keeps scrolling that pane
+  if (typeof to !== "string") scrollPane(to, e);
+  else onWheel(e, to === "zoom");
 }, { passive: false });
 
 /**
@@ -184,7 +188,25 @@ for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
  * (and a canvas pan never gets hijacked by a pane sliding under the cursor).
  */
 const WHEEL_GESTURE_GAP_MS = 250;
-let wheelLatch: { to: "canvas" | Element; t: number } | null = null;
+let wheelLatch: { to: "canvas" | "zoom" | Element; t: number } | null = null;
+
+/** Where one wheel event goes: the canvas (pan), a zoom, or the frame pane the gesture is latched to. */
+function routeWheel(e: WheelEvent, paneUnder: () => Element | null) {
+  const now = performance.now();
+  const latch = wheelLatch && now - wheelLatch.t <= WHEEL_GESTURE_GAP_MS ? wheelLatch : null;
+  // pinch arrives as ctrl+wheel, so ctrl always zooms; Cmd+wheel zooms only when the gesture began
+  // with it, so pressing Cmd (say for Cmd+C) during a scroll's momentum doesn't zoom the rest of it
+  let to: "canvas" | "zoom" | Element;
+  if (e.ctrlKey || (e.metaKey && (!latch || latch.to === "zoom"))) to = "zoom";
+  else if (!latch || latch.to === "zoom" || (typeof latch.to !== "string" && !latch.to.isConnected)) to = paneUnder() ?? "canvas";
+  else to = latch.to;
+  wheelLatch = { to, t: now };
+  return to;
+}
+const scrollPane = (pane: Element, e: WheelEvent) => {
+  const k = e.deltaMode === 1 ? 16 : 1;
+  pane.scrollBy(e.deltaX * k, e.deltaY * k);
+};
 
 /** Innermost element under the pointer that can scroll on the wheel's main axis. */
 function scrollerFor(start: Element | null, win: Window, horizontal: boolean): Element | null {
@@ -509,28 +531,19 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
     return { clientX: r.left + e.clientX * k, clientY: r.top + e.clientY * k };
   };
   doc.addEventListener("wheel", (e) => {
-    const zoom = e.ctrlKey || e.metaKey;
-    if (!zoom) {
-      const now = performance.now();
-      if (!wheelLatch || now - wheelLatch.t > WHEEL_GESTURE_GAP_MS) {
-        const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
-        wheelLatch = { to: scrollerFor(e.target as Element, win, horizontal) ?? "canvas", t: now };
-      }
-      wheelLatch.t = now;
-      const latched = wheelLatch.to;
-      if (latched !== "canvas") {
-        // the pane under the pointer scrolls natively; nothing reaches the canvas
-        if (latched.contains(e.target as Node)) return;
-        // pointer drifted off the pane mid-gesture: keep scrolling it
-        e.preventDefault();
-        const k = e.deltaMode === 1 ? 16 : 1;
-        latched.scrollBy(e.deltaX * k, e.deltaY * k);
-        return;
-      }
+    const horizontal = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    const to = routeWheel(e, () => scrollerFor(e.target as Element, win, horizontal));
+    if (typeof to !== "string") {
+      // the pane under the pointer scrolls natively; nothing reaches the canvas
+      if (to.contains(e.target as Node)) return;
+      // pointer drifted off the pane mid-gesture: keep scrolling it
+      e.preventDefault();
+      scrollPane(to, e);
+      return;
     }
     e.preventDefault();
     const p = toParent(e);
-    onWheel({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, ...p });
+    onWheel({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, shiftKey: e.shiftKey, ...p }, to === "zoom");
   }, { passive: false });
   for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
     doc.addEventListener(type, (e) => onGesture(e as GestureLike, toParent(e as GestureLike & MouseEvent)), { passive: false });
