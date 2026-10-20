@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Divs &amp; Spans</title>
 <link rel="icon" href="/favicon.svg">
 <link rel="stylesheet" href="/app.css">
@@ -28,24 +28,41 @@
     <span class="status-dot" id="liveDot" title="Connecting…"></span>
   </div>
   <div class="spacer"></div>
-  <div class="group">
+  <div class="group phone-only">
+    <button class="btn" id="shareBtn" title="Share a link to the selection, the frame or the file">Share</button>
+  </div>
+  <!-- tools: in the bar on desktop, a dock at the bottom on phones -->
+  <nav class="group tools" id="tools" aria-label="Tools">
+    <button class="btn phone-only" id="moveBtn" aria-pressed="true" title="Move: drag to pan, pinch to zoom">Move</button>
     <button class="btn" id="pickBtn" aria-pressed="false" title="Select an element to copy its link · Shift-click to select more (L)">Select<span class="hide-lg">element</span> <kbd>L</kbd></button>
     <button class="btn" id="flowsBtn" aria-pressed="false" title="Show every link between frames (P) · A selected element always shows its own links · Alt-click a link in a frame to follow it">Flows <kbd>P</kbd></button>
-    <div class="sep hide-sm"></div>
-    <button class="btn hide-sm" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
-    <button class="btn hide-sm" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
-    <button class="btn hide-sm" data-theme-mode="both" aria-pressed="false" title="Light and dark side by side">Both</button>
-    <div class="sep hide-sm"></div>
-    <select class="btn hide-sm" id="deviceSel" aria-label="Device to preview frames on" title="Device to preview frames on"></select>
-    <button class="btn hide-sm" id="chromeBtn" aria-pressed="false" title="Show device chrome: status bar, Dynamic Island, home indicator (D)">Bezel <kbd>D</kbd></button>
-    <button class="btn hide-sm" id="fullBtn" aria-pressed="false" title="Show every frame at full page height instead of one screen (H)">Full height <kbd>H</kbd></button>
-  </div>
-  <div class="group">
-    <button class="btn" id="fitBtn" title="Zoom to fit (Shift+1)">Fit</button>
-    <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0)">100%</button>
-  </div>
-  <div class="group">
-    <button class="btn primary" id="connectBtn">Connect</button>
+    <div class="sep phone-only"></div>
+    <div class="stepper phone-only">
+      <button class="btn" id="prevFrame" aria-label="Previous frame">‹</button>
+      <button class="btn count" id="frameCount" title="Fit all frames">–</button>
+      <button class="btn" id="nextFrame" aria-label="Next frame">›</button>
+    </div>
+    <div class="sep phone-only"></div>
+    <button class="btn phone-only" id="viewBtn" aria-expanded="false" aria-controls="viewSheet">View</button>
+  </nav>
+  <!-- view settings: in the bar on desktop, a sheet above the dock on phones -->
+  <div class="view-sheet" id="viewSheet">
+    <div class="group view">
+      <button class="btn" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
+      <button class="btn" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
+      <button class="btn" data-theme-mode="both" aria-pressed="false" title="Light and dark side by side">Both</button>
+      <div class="sep"></div>
+      <select class="btn" id="deviceSel" aria-label="Device to preview frames on" title="Device to preview frames on"></select>
+      <button class="btn" id="chromeBtn" aria-pressed="false" title="Show device chrome: status bar, Dynamic Island, home indicator (D)">Bezel <kbd>D</kbd></button>
+      <button class="btn" id="fullBtn" aria-pressed="false" title="Show every frame at full page height instead of one screen (H)">Full height <kbd>H</kbd></button>
+    </div>
+    <div class="group">
+      <button class="btn" id="fitBtn" title="Zoom to fit (Shift+1)">Fit</button>
+      <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0)">100%</button>
+    </div>
+    <div class="group">
+      <button class="btn primary" id="connectBtn">Connect</button>
+    </div>
   </div>
 </header>
 

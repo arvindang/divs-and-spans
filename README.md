@@ -64,6 +64,10 @@ The server's `instructions` (in `src/mcp.ts`, `CONTRACT`) are the only design gu
 
 `L` select an element to copy its link (Shift-click to select more; a selected container includes everything inside it; Option-click for its parent) · `0`–`9` select a frame · `Tab`/`Shift+Tab` next/previous frame · `C` copy links to the selected elements (or the selected frame) · `Space`+drag or drag empty canvas to pan · pinch or ⌘/Ctrl+scroll to zoom · `Shift+1` fit · `Shift+0` 100% · `F` focus selected frame · `H` full height vs one screen · `D` device bezel (status bar, Dynamic Island, home indicator) · drag a frame's right or bottom edge to resize every frame to a custom size · `P` show every link between frames (a selected element always shows its own links; with `P` on, the selected frame's links stand out; click a line to focus just that link, again to follow it; Option-click a link in a frame to follow it) · `Esc` steps back: a focused line, then selected elements, then Select and Flows, then the frame.
 
+## On a phone
+
+Under 820px wide the tools move to a dock at the bottom: **Move** (one finger pans anywhere, two pinch to zoom, tap a frame to select it), **Select** (tap an element to select it and copy its link; frames scroll), **Flows**, a `‹ 2/5 ›` stepper that fits one frame at a time (tap the count to fit all), and **View** (theme, device, bezel, full height, zoom, Connect). On touch, the pick bar has buttons in place of the modifier keys: **Parent** (Option-click), **+ Add** (Shift-click), **Go →** (follow the selected link), **Copy** and clear. **Share** sends the selection's, frame's or file's link through the share sheet.
+
 ## Not in the MVP yet
 
 Auth (file ids are unguessable capability URLs for now; anyone with a link can edit) · comments · pasted images (R2) · screenshots for the agent (Browser Rendering) · responsive previews beyond the width setting · frame reordering on the canvas.

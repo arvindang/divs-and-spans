@@ -98,11 +98,16 @@ function zoomAt(clientX: number, clientY: number, nextZ: number) {
   cam = { x: clientX - wx * z, y: clientY - wy * z, z };
   applyCamera();
 }
+/** Phones get the dock at the bottom and the view sheet; mirrors the CSS breakpoint. */
+const phone = matchMedia("(max-width: 820px)");
+const coarse = matchMedia("(pointer: coarse)");
+
 /** Fit a world-space rect into the viewport. */
 function fitRect(r: { x: number; y: number; w: number; h: number }, maxZ = 1) {
   const padX = Math.min(80, viewport.clientWidth * 0.05);
-  const padTop = 110;
-  const padBottom = 60;
+  // clear the bar plus a frame label on top, and the dock on phones
+  const padTop = phone.matches ? $(".bar").getBoundingClientRect().bottom + 40 : 110;
+  const padBottom = phone.matches ? innerHeight - $("#tools").getBoundingClientRect().top + 16 : 60;
   const vw = viewport.clientWidth - padX * 2;
   const vh = viewport.clientHeight - padTop - padBottom;
   const z = Math.min(maxZ, vw / r.w, vh / r.h);
@@ -156,6 +161,8 @@ type GestureLike = Event & { scale: number; clientX: number; clientY: number };
 let pinch: { scale: number; viaWheel: boolean } | null = null;
 function onGesture(e: GestureLike, at = { clientX: e.clientX, clientY: e.clientY }) {
   e.preventDefault();
+  // a touch pinch on the canvas is already zooming through pointer events
+  if (touches.size) return;
   // Safari can report scale 0; dividing by it later is how the zoom became NaN
   if (e.type !== "gestureend" && !(e.scale > 0 && Number.isFinite(e.scale))) return;
   if (e.type === "gesturestart") pinch = { scale: 1, viaWheel: false };
@@ -193,31 +200,101 @@ function scrollerFor(start: Element | null, win: Window, horizontal: boolean): E
   return null;
 }
 
-// drag to pan: on empty canvas, with space held, or middle mouse
+// drag to pan: on empty canvas, with space held, or middle mouse; with Move, one finger anywhere
 let spaceDown = false;
 let drag: { x: number; y: number; cx: number; cy: number; id: number } | null = null;
+/** Fingers on the canvas; two pinch-zoom around their midpoint and pan with it. */
+const touches = new Map<number, { x: number; y: number }>();
+let touchPinch: { d: number; x: number; y: number } | null = null;
+/** A touch that moved is a pan, not a tap: swallow the click it would end in. */
+let touchMoved = false;
+let swallowClicksUntil = 0;
+let touchStart = { x: 0, y: 0 };
+const TAP_SLOP = 8;
+const pinchOf = () => {
+  const [a, b] = [...touches.values()];
+  return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+};
+const startDrag = (e: PointerEvent) => {
+  drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, id: e.pointerId };
+  viewport.classList.add("panning");
+};
 viewport.addEventListener("pointerdown", (e) => {
+  closeViewSheet();
   const onEmpty = e.target === viewport || e.target === world;
+  if (e.pointerType === "touch") {
+    // flow lines and resize handles keep their own touches
+    if ((e.target as Element).closest(".hit, .resize")) return;
+    if (e.isPrimary) touches.clear(); // a new gesture: drop any finger whose lift we missed
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 1) {
+      touchMoved = false;
+      touchStart = { x: e.clientX, y: e.clientY };
+      if (!picking || onEmpty) startDrag(e);
+    } else if (touches.size === 2) {
+      drag = null;
+      touchMoved = true;
+      touchPinch = pinchOf();
+      viewport.classList.add("panning");
+    }
+    return;
+  }
   if (e.button === 1 || spaceDown || (e.button === 0 && onEmpty)) {
     e.preventDefault();
-    drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, id: e.pointerId };
+    startDrag(e);
     viewport.setPointerCapture(e.pointerId);
-    viewport.classList.add("panning");
     if (onEmpty && !spaceDown) select(null);
   }
 });
 viewport.addEventListener("pointermove", (e) => {
+  if (touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (Math.hypot(e.clientX - touchStart.x, e.clientY - touchStart.y) > TAP_SLOP) touchMoved = true;
+    if (touchPinch && touches.size >= 2) {
+      const p = pinchOf();
+      cam.x += p.x - touchPinch.x;
+      cam.y += p.y - touchPinch.y;
+      zoomAt(p.x, p.y, cam.z * (p.d / touchPinch.d));
+      touchPinch = p;
+      return;
+    }
+  }
   if (!drag || e.pointerId !== drag.id) return;
   cam.x = drag.cx + (e.clientX - drag.x);
   cam.y = drag.cy + (e.clientY - drag.y);
   applyCamera();
 });
-const endDrag = () => {
+const endDrag = (e: PointerEvent) => {
+  if (touches.delete(e.pointerId)) {
+    if (touches.size < 2) touchPinch = null;
+    // lifting one finger of a pinch carries on as a pan with the other
+    if (touches.size === 1) {
+      const [[id, p]] = [...touches];
+      drag = { x: p.x, y: p.y, cx: cam.x, cy: cam.y, id };
+      return;
+    }
+    if (touches.size) return;
+    if (touchMoved) swallowClicksUntil = performance.now() + 400;
+    else if (e.type === "pointerup") tapAt(e);
+  }
   drag = null;
   viewport.classList.remove("panning");
 };
 viewport.addEventListener("pointerup", endDrag);
 viewport.addEventListener("pointercancel", endDrag);
+viewport.addEventListener("click", (e) => {
+  if (performance.now() < swallowClicksUntil) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}, true);
+/** A tap with Move: on a frame selects it, on empty canvas clears. */
+function tapAt(e: PointerEvent) {
+  if (picking) return;
+  const frame = (e.target as Element).closest<HTMLElement>(".frame");
+  if (frame) select(frame.dataset.id!);
+  else if (e.target === viewport || e.target === world) select(null);
+}
 
 // ---------- keyboard ----------
 function onKey(e: KeyboardEvent, down: boolean) {
@@ -233,7 +310,8 @@ function onKey(e: KeyboardEvent, down: boolean) {
   if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if ((e.key === "c" || e.key === "C") && (targets.length || selectedFrame)) copySelection();
   else if (e.key === "Escape") {
-    if (focusedEdge) focusEdge(null);
+    if (document.body.classList.contains("view-open")) closeViewSheet();
+    else if (focusedEdge) focusEdge(null);
     else if (targets.length) setTargets([], false);
     else if (picking || flowsAll) {
       // one press turns every tool off
@@ -282,6 +360,7 @@ function select(id: string | null) {
   selectedFrame = id;
   focusedEdge = null;
   for (const [fid, el] of frameEls) el.classList.toggle("selected", fid === id);
+  renderStepper();
   const path = id ? `/f/${fileId}/${id}` : `/f/${fileId}`;
   if (location.pathname !== path) history.replaceState(null, "", path + (id && hashFor(id) ? `#${hashFor(id)}` : ""));
   scheduleFlows();
@@ -289,7 +368,9 @@ function select(id: string | null) {
 
 function setPicking(on: boolean) {
   picking = on;
+  if (!on) multi = false;
   $("#pickBtn").setAttribute("aria-pressed", String(on));
+  $("#moveBtn").setAttribute("aria-pressed", String(!on));
   forEachDoc((doc) => {
     doc.documentElement.toggleAttribute("data-ds-picking", on);
     if (on) doc.getSelection()?.removeAllRanges();
@@ -297,13 +378,30 @@ function setPicking(on: boolean) {
   });
   renderPickBar();
 }
-/** Stays up while selecting: how many are selected and the keys that apply. */
+/**
+ * Stays up while selecting: how many are selected and the keys that apply.
+ * Touch has no Shift or Option, so it gets buttons for what those keys do.
+ */
 function renderPickBar() {
   const bar = $("#pickBar");
   bar.hidden = !picking;
   document.body.classList.toggle("picking", picking);
   if (!picking) return;
   const n = targets.length;
+  if (coarse.matches) {
+    const current = targets.at(-1);
+    const actions = n
+      ? [
+        `<button class="btn" data-pick="parent" title="Select the element around it">↑ Parent</button>`,
+        current && linkTarget(current) ? `<button class="btn" data-pick="go" title="Go where this link leads">Go →</button>` : "",
+        `<button class="btn" data-pick="multi" aria-pressed="${multi}" title="Tap more elements to add or remove them">+ Add</button>`,
+        `<button class="btn" data-pick="copy">Copy</button>`,
+        `<button class="btn" data-pick="clear" aria-label="Clear selection">✕</button>`,
+      ]
+      : [];
+    bar.innerHTML = `<b>${n ? `${n} selected` : "Tap an element to select it"}</b><div class="actions">${actions.join("")}</div>`;
+    return;
+  }
   const hints = [
     n ? "<kbd>C</kbd> copy link" : "",
     `<kbd>⇧</kbd> click to ${n ? "add or remove" : "select several"}`,
@@ -324,6 +422,53 @@ function copySelection() {
   } else if (selectedFrame) copy(frameLink(selectedFrame), "Copied frame link");
 }
 $("#pickBtn").addEventListener("click", () => setPicking(!picking));
+$("#moveBtn").addEventListener("click", () => setPicking(false));
+
+/** Touch's Shift: while on, taps add or remove elements instead of replacing the selection. */
+let multi = false;
+/** A selected element in the frame's first screen. */
+const elementOf = (t: Target) => primaryIframe(t.frameId)?.contentDocument?.querySelector(`[data-ds="${CSS.escape(t.elementId)}"]`) ?? null;
+/** Where the selected element leads: the link it is or sits in, else the one link to a frame it holds. */
+function linkTarget(t: Target) {
+  const el = elementOf(t);
+  if (!el) return null;
+  const doc = el.ownerDocument;
+  const inner = new Map<string, { kind: "edge"; to: string; toElement?: string }>();
+  for (const l of linksOf(doc).links) {
+    if (!l.el.contains(el) && !el.contains(l.el)) continue;
+    const r = resolve(doc, t.frameId, l);
+    if (r?.kind !== "edge") continue;
+    if (l.el.contains(el)) return r;
+    inner.set(`${r.to}/${r.toElement ?? ""}`, r);
+  }
+  return inner.size === 1 ? [...inner.values()][0] : null;
+}
+/** Option-click's job on touch: swap the current element for the one around it. */
+function selectParent() {
+  const t = targets.at(-1);
+  const parent = t && elementOf(t)?.parentElement?.closest("[data-ds]");
+  if (!t || !parent) return void toast("Nothing around it to select");
+  const next = { frameId: t.frameId, elementId: parent.getAttribute("data-ds")! };
+  setTargets([...targets.slice(0, -1).filter((x) => !(x.frameId === t.frameId && parent.contains(elementOf(x)))), next], false);
+  if (targets.length === 1) copy(frameLink(next.frameId, next.elementId), `Copied link to ${describe(parent)}`);
+  else copySelection();
+}
+$("#pickBar").addEventListener("click", (e) => {
+  const action = (e.target as Element).closest<HTMLElement>("[data-pick]")?.dataset.pick;
+  const t = targets.at(-1);
+  if (action === "parent") selectParent();
+  else if (action === "go" && t) {
+    const r = linkTarget(t);
+    if (r?.kind === "edge") {
+      follow(r.to, r.toElement);
+      if (!r.toElement) focusFrame(r.to);
+    }
+  } else if (action === "multi") {
+    multi = !multi;
+    renderPickBar();
+  } else if (action === "copy") copySelection();
+  else if (action === "clear") setTargets([], false);
+});
 
 function forEachDoc(fn: (doc: Document, frameId: string, iframe: HTMLIFrameElement) => void) {
   for (const [fid, el] of frameEls) {
@@ -336,7 +481,7 @@ function forEachDoc(fn: (doc: Document, frameId: string, iframe: HTMLIFrameEleme
 
 const PICK_CSS = `
 html { overscroll-behavior: none; }
-html[data-ds-picking] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; }
+html[data-ds-picking] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
 [data-ds-hover] { outline: 2px solid #6d5dfc !important; outline-offset: -1px !important; }
 [data-ds-target] { outline: 2px solid #f59e0b !important; outline-offset: 2px !important; }
 [data-ds-target] [data-ds]:not([data-ds-hover]) { outline: 1px dashed rgb(245 158 11 / 0.45) !important; outline-offset: -1px !important; }
@@ -422,7 +567,7 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
     const el = pickable(e.target, e.altKey);
     if (!el) return;
     const t = { frameId, elementId: el.getAttribute("data-ds")! };
-    if (!e.shiftKey) {
+    if (!e.shiftKey && !multi) {
       setTargets([t], false);
       copy(frameLink(frameId, t.elementId), `Copied link to ${describe(el)}`);
       return;
@@ -971,6 +1116,7 @@ function renderAll() {
   for (const btn of document.querySelectorAll<HTMLElement>("[data-theme-mode]")) {
     btn.setAttribute("aria-pressed", String(btn.dataset.themeMode === themeMode));
   }
+  renderStepper();
   maybeInitialFocus();
   scheduleFlows();
 }
@@ -1030,9 +1176,58 @@ nameInput.addEventListener("change", async () => {
   document.title = `${name} · Divs & Spans`;
 });
 
+// frame stepper: one frame at a time, fitted to the screen
+function renderStepper() {
+  const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
+  $("#frameCount").textContent = frameOrder.length ? `${i < 0 ? "–" : i + 1}/${frameOrder.length}` : "–";
+  for (const id of ["#prevFrame", "#nextFrame", "#frameCount"]) ($(id) as HTMLButtonElement).disabled = !frameOrder.length;
+}
+function step(by: 1 | -1) {
+  if (!frameOrder.length) return;
+  const n = frameOrder.length;
+  const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
+  const id = frameOrder[i < 0 ? (by > 0 ? 0 : n - 1) : (i + by + n) % n];
+  if (targets.length) setTargets([], false);
+  select(id);
+  focusFrame(id);
+}
+$("#prevFrame").addEventListener("click", () => step(-1));
+$("#nextFrame").addEventListener("click", () => step(1));
+$("#frameCount").addEventListener("click", fitAll);
+
+// view sheet (phones): the bar's view settings, opened from the dock
+function closeViewSheet() {
+  document.body.classList.remove("view-open");
+  $("#viewBtn").setAttribute("aria-expanded", "false");
+}
+$("#viewBtn").addEventListener("click", () => {
+  const open = document.body.classList.toggle("view-open");
+  $("#viewBtn").setAttribute("aria-expanded", String(open));
+  if (open) pop.hidden = true;
+});
+
+// share: the selected elements, else the selected frame, else the file
+$("#shareBtn").addEventListener("click", async () => {
+  const url = targets.length
+    ? [...new Set(targets.map((t) => t.frameId))].map((fid) => frameLink(fid, hashFor(fid))).join("\n")
+    : selectedFrame ? frameLink(selectedFrame) : `${location.origin}/f/${fileId}`;
+  const what = targets.length ? "the selected elements" : selectedFrame ? "this frame" : "this file";
+  if (navigator.share && !url.includes("\n")) {
+    try {
+      return void (await navigator.share({ url, title: document.title }));
+    } catch (err) {
+      if ((err as Error).name === "AbortError") return;
+    }
+  }
+  copy(url, `Copied link to ${what}`);
+});
+
 // connect popover
 const pop = $("#connectPop");
-const togglePop = () => (pop.hidden = !pop.hidden);
+const togglePop = () => {
+  pop.hidden = !pop.hidden;
+  closeViewSheet();
+};
 $("#connectBtn").addEventListener("click", togglePop);
 $("#emptyConnect").addEventListener("click", togglePop);
 ($("#mcpUrl") as HTMLInputElement).value = `${location.origin}/mcp`;
