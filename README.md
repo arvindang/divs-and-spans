@@ -4,6 +4,8 @@ Visual markdown for UI. An LLM writes HTML and CSS over MCP, the canvas renders 
 
 No design tooling on purpose. No layers, shapes, or pen. The canvas renders and links; the model designs.
 
+Live: https://divs-and-spans.arvindang.workers.dev · MCP at `/mcp`
+
 ## Run it
 
 ```sh
@@ -70,4 +72,4 @@ Under 820px wide the tools move to a dock at the bottom: **Move** (one finger pa
 
 ## Not in the MVP yet
 
-Auth (file ids are unguessable capability URLs for now; anyone with a link can edit) · comments · pasted images (R2) · screenshots for the agent (Browser Rendering) · responsive previews beyond the width setting · frame reordering on the canvas.
+Auth (file ids are unguessable capability URLs for now; anyone with a link can edit) · comments · pasted images (R2) · screenshots for the agent (Browser Rendering) · frame reordering on the canvas.
