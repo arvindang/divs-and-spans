@@ -105,15 +105,17 @@ const coarse = matchMedia("(pointer: coarse)");
 /** Fit a world-space rect into the viewport. */
 function fitRect(r: { x: number; y: number; w: number; h: number }, maxZ = 1) {
   const padX = Math.min(80, viewport.clientWidth * 0.05);
-  // clear the bar plus a frame label on top, and the dock on phones
-  const padTop = phone.matches ? $(".bar").getBoundingClientRect().bottom + 40 : 110;
+  // the frame label rail runs down the left edge, bezel included
+  const padLeft = Math.max(padX, 60);
+  // clear the bar plus the copy link on top, and the dock on phones
+  const padTop = phone.matches ? $(".bar").getBoundingClientRect().bottom + 56 : 110;
   const padBottom = phone.matches ? innerHeight - $("#tools").getBoundingClientRect().top + 16 : 60;
-  const vw = viewport.clientWidth - padX * 2;
+  const vw = viewport.clientWidth - padLeft - padX;
   const vh = viewport.clientHeight - padTop - padBottom;
   const z = Math.min(maxZ, vw / r.w, vh / r.h);
   cam = {
     z,
-    x: padX + (vw - r.w * z) / 2 - r.x * z,
+    x: padLeft + (vw - r.w * z) / 2 - r.x * z,
     y: padTop + Math.max(0, (vh - r.h * z) / 2) - r.y * z,
   };
   applyCamera();
@@ -858,14 +860,14 @@ function buildFrameEl(f: FrameSummary) {
   el.innerHTML = `
     <div class="frame-label">
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
-      <button class="copy" title="Copy frame link (C when selected)">Copy link <kbd>C</kbd></button>
     </div>
+    <button class="frame-copy" title="Copy frame link (C when selected)">Copy link <kbd>C</kbd></button>
     <div class="frame-body"></div>
     <i class="resize e" data-axis="e" title="Drag to resize every frame"></i>
     <i class="resize s" data-axis="s" title="Drag to resize every frame"></i>
     <i class="resize se" data-axis="se" title="Drag to resize every frame"></i>`;
   el.querySelectorAll<HTMLElement>(".resize").forEach((h) => wireResize(h, f.id));
-  el.querySelector(".copy")!.addEventListener("click", (e) => {
+  el.querySelector(".frame-copy")!.addEventListener("click", (e) => {
     e.stopPropagation();
     copy(frameLink(f.id), "Copied frame link");
   });

@@ -154,53 +154,59 @@ select.btn { appearance: none; padding-right: 10px; }
 
 /* ---------- frames ---------- */
 .frame { position: relative; flex: none; }
+/* name, version and device run down the left edge, so long names don't fight the copy button for width */
 .frame-label {
-  container-type: inline-size;
   position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
+  top: 0;
+  right: 100%;
+  max-height: 100%;
+  writing-mode: vertical-rl;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding-bottom: calc(8px / var(--z, 1));
+  padding-right: calc(8px / var(--z, 1));
   font-size: calc(13px / var(--z, 1));
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
-  transform-origin: 0 100%;
 }
-.viewport.tiny .frame-label .meta, .viewport.tiny .frame-label .copy { display: none; }
-.viewport.tiny .task-text { display: none; }
-.frame-label .name { flex: 0 1 auto; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-.frame-label .meta { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 0.85em; }
-.frame-label .copy {
-  margin-left: auto;
+.frame-label .name { flex: 0 1 auto; min-inline-size: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.frame-label .meta { flex: 0 1000 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 0.85em; }
+.frame-copy {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
   border: 0;
   background: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: inherit;
-  padding: 0;
+  font-size: calc(13px / var(--z, 1));
+  white-space: nowrap;
+  padding: 0 0 calc(8px / var(--z, 1));
 }
-.frame-label .copy:hover { color: var(--accent); }
-.frame-label kbd {
+.frame-copy:hover { color: var(--accent); }
+.frame-label kbd, .frame-copy kbd {
   font: 0.85em var(--mono);
   border: calc(1px / var(--z, 1)) solid var(--line);
   border-radius: 0.3em;
-  padding: 0 0.3em;
-  margin-left: 0.3em;
-}
-/* em here is the label's own font size, so this holds at every zoom level */
-@container (max-width: 24em) {
-  .frame-label .copy { display: none; }
-  .frame:hover .frame-label .copy { display: inline; flex: none; }
-  .frame:hover .frame-label .meta { display: none; }
+  padding-inline: 0.3em;
+  margin-inline-start: 0.3em;
 }
 .frame.selected .frame-label .name { color: var(--accent); }
-.frame-label .key { display: none; margin: 0; flex: none; }
+.frame-label .key { display: none; margin: 0; flex: none; text-orientation: upright; }
 .frame:is(:hover, .selected) .frame-label .key:not(:empty) { display: inline; }
-.viewport.tiny .frame-label .key { display: none !important; }
+/* zoomed far out the rail would run into the neighbouring frame, so the name goes back on top */
+.viewport.tiny .frame-label {
+  writing-mode: horizontal-tb;
+  top: auto;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: none;
+  padding: 0 0 calc(8px / var(--z, 1));
+}
+.viewport.tiny .frame-label .meta, .viewport.tiny .frame-copy, .viewport.tiny .frame-label .key { display: none !important; }
+.viewport.tiny .task-text { display: none; }
 .frame-body { display: flex; gap: 40px; }
 .screen {
   position: relative;
@@ -220,7 +226,9 @@ select.btn { appearance: none; padding-right: 10px; }
 }
 /* device chrome (D): drawn in CSS so it stays sharp at any zoom */
 .frame.dressed .frame-body { gap: 80px; }
-.frame.dressed .frame-label { margin-bottom: 24px; }
+.frame.dressed .frame-label { margin-right: 24px; }
+.viewport.tiny .frame.dressed .frame-label { margin: 0 0 24px; }
+.frame.dressed .frame-copy { margin-bottom: 24px; }
 .screen.device {
   --bezel: 12px;
   border-radius: var(--radius);
@@ -628,11 +636,5 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
   body:not(.picking) .screen iframe { pointer-events: none; }
   .frame:not(.selected) .resize { display: none; }
   .frame.selected .resize { opacity: 1; }
-  .frame-label kbd { display: none !important; }
-}
-@container (max-width: 24em) {
-  @media (hover: none) {
-    .frame.selected .frame-label .copy { display: inline; flex: none; }
-    .frame.selected .frame-label .meta { display: none; }
-  }
+  .frame-label kbd, .frame-copy kbd { display: none !important; }
 }
