@@ -7,7 +7,9 @@ import { strFromU8, unzipSync } from "fflate";
 
 const base = process.argv[2] || "http://localhost:8787";
 const client = new Client({ name: "smoke", version: "0" });
-await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
+// "ds-test" marks our own traffic so scripts/weekly.mjs can leave it out (also `curl -A ds-test` for manual checks)
+const requestInit = { headers: { "User-Agent": "ds-test/smoke" } };
+await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit }));
 
 const call = async (name, args, expectError = false) => {
   const res = await client.callTool({ name, arguments: args });

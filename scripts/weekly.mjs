@@ -52,9 +52,20 @@ async function sql(query) {
   return JSON.parse(body).data;
 }
 
+/**
+ * Our own traffic (scripts/smoke.mjs, `curl -A ds-test`) hits production too. Its MCP calls carry
+ * the actor "ds-test"; exports and PNGs don't record a client, so the files it touched go as well.
+ */
+const TEST_ACTOR = "ds-test";
+const testFiles = (
+  await sql(`SELECT index1 AS f FROM ${DATASET}
+    WHERE timestamp > NOW() - INTERVAL '${days * 2}' DAY AND blob4 = '${TEST_ACTOR}' AND index1 != '' GROUP BY f`)
+).map((r) => `'${r.f}'`);
+const notTest = `blob4 != '${TEST_ACTOR}'` + (testFiles.length ? ` AND index1 NOT IN (${testFiles.join(", ")})` : "");
+
 // window 0 is the current period, 1 the one before it
 const span = (w) =>
-  `timestamp > NOW() - INTERVAL '${days * (w + 1)}' DAY` + (w ? ` AND timestamp <= NOW() - INTERVAL '${days * w}' DAY` : "");
+  `timestamp > NOW() - INTERVAL '${days * (w + 1)}' DAY` + (w ? ` AND timestamp <= NOW() - INTERVAL '${days * w}' DAY` : "") + ` AND ${notTest}`;
 
 const one = async (select, where, w) => {
   const [row] = await sql(`SELECT ${select} AS v FROM ${DATASET} WHERE ${span(w)} AND ${where}`);
