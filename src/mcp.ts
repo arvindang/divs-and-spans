@@ -13,7 +13,7 @@ import { clientFromUserAgent, countryOf, track } from "./analytics";
 export const CONTRACT = `Divs & Spans is a design canvas. You design UI by writing HTML and CSS; the person reviews it live on the canvas and sends you links to whole files, single frames, or individual elements.
 
 The contract (structural only, the design itself is yours):
-1. A frame is one complete HTML document (one screen, state or component sheet). Plain HTML and CSS — no frameworks, no CDNs for CSS libraries. Scripts don't run on the canvas. The canvas shows each frame one device viewport tall with the document scrolling inside (like a browser), or expanded to full page height.
+1. A frame is one complete HTML document (one screen, state or component sheet). Plain HTML and CSS — no frameworks, no CDNs for CSS libraries. Scripts don't run on the canvas. The canvas shows each frame one device viewport tall with the document scrolling inside (like a browser), or expanded to full page height. The viewport is the iframe, so a header or tab bar that should stay put needs position: fixed or sticky, and screen-tall layouts should use vh/dvh, not a pixel device height.
 2. Each file has one tokens.css that's injected into every frame before the frame's own styles. Colors, type and spacing belong there as custom properties, and frames use them via var(--…).
 3. tokens.css defines both color schemes. Prefer \`color-scheme: light dark\` on :root with light-dark(<light>, <dark>) values; the canvas can force either scheme with [data-theme="light"|"dark"] on <html>.
 4. On a new file, design the first frame freely, then extract what you used into tokens.css (update_tokens) and write a foundations/styleguide frame that documents palette, type, voice and rules. Later frames follow it.
