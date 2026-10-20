@@ -17,6 +17,8 @@ export interface ParsedLink {
   fileId: string;
   frameId?: string;
   elementId?: string;
+  /** Every element in the hash: #a,b,c points at several elements in one frame. */
+  elementIds?: string[];
 }
 
 /**
@@ -24,13 +26,15 @@ export interface ParsedLink {
  *   https://host/f/<file>
  *   https://host/f/<file>/<frame>
  *   https://host/f/<file>/<frame>#<element>
+ *   https://host/f/<file>/<frame>#<element>,<element>,…
  *   <file>  |  <file>/<frame>  |  <file>/<frame>#<element>
  */
 export function parseLink(input: string): ParsedLink | null {
   const s = input.trim().replace(/\?[^#]*/, "");
-  const m = s.match(/(?:^|\/f\/)([a-z0-9]{6,32})(?:\/([a-z0-9]{4,32}))?\/?(?:#([a-z0-9_-]{2,32}))?\/?$/i);
+  const m = s.match(/(?:^|\/f\/)([a-z0-9]{6,32})(?:\/([a-z0-9]{4,32}))?\/?(?:#([a-z0-9_-]{2,32}(?:,[a-z0-9_-]{2,32})*))?\/?$/i);
   if (!m) return null;
-  return { fileId: m[1], frameId: m[2] || undefined, elementId: m[3] || undefined };
+  const elementIds = m[3]?.split(",");
+  return { fileId: m[1], frameId: m[2] || undefined, elementId: elementIds?.[0], elementIds };
 }
 
 export const links = (origin: string) => ({

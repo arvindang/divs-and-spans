@@ -21,7 +21,7 @@
   </div>
   <div class="spacer"></div>
   <div class="group">
-    <button class="btn" id="pickBtn" aria-pressed="false" title="Pick an element to copy its link">Link<span class="hide-lg">element</span> <kbd>L</kbd></button>
+    <button class="btn" id="pickBtn" aria-pressed="false" title="Select an element to copy its link · Shift-click to select more (L)">Select<span class="hide-lg">element</span> <kbd>L</kbd></button>
     <div class="sep hide-sm"></div>
     <button class="btn hide-sm" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
     <button class="btn hide-sm" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
@@ -63,6 +63,7 @@
   </div>
 </div>
 
+<div class="pick-bar" id="pickBar" role="status" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="/js/canvas.js"></script>
 </body>

@@ -21,7 +21,8 @@ export async function copy(text: string, label = "Copied") {
     document.execCommand("copy");
     ta.remove();
   }
-  toast(`${escapeHtml(label)} <code>${escapeHtml(text)}</code>`);
+  // several lines (e.g. multiple element links) won't fit the toast: the label says how many
+  toast(text.includes("\n") ? escapeHtml(label) : `${escapeHtml(label)} <code>${escapeHtml(text)}</code>`);
 }
 
 export const escapeHtml = (s: string) =>

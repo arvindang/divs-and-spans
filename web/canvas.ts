@@ -40,18 +40,23 @@ let defaultWidth = prefs.get<number>("width", 1440);
 let fullHeight = prefs.get<boolean>("fullHeight", false);
 let picking = false;
 let selectedFrame: string | null = initialFrameId || null;
-let target: { frameId: string; elementId: string } | null = null;
+type Target = { frameId: string; elementId: string };
+/** Selected elements; the last one is the "current" one (URL hash, focus). */
+let targets: Target[] = [];
 let cam = { x: 80, y: 120, z: 0.5 };
+let lastGoodCam = { ...cam };
 let didInitialFocus = false;
 
 const viewportHeightFor = (w: number) => (w <= 480 ? 844 : w <= 900 ? 1112 : 900);
 const widthOf = (f: FrameSummary) => f.width ?? defaultWidth;
 const schemes = (): Scheme[] => (themeMode === "both" ? ["light", "dark"] : [themeMode]);
-const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 const frameLink = (frameId: string, el?: string) => `${location.origin}/f/${fileId}/${frameId}${el ? `#${el}` : ""}`;
 
 // ---------- camera ----------
 function applyCamera() {
+  // one NaN (e.g. from a bad gesture value) would otherwise stick forever, Fit included
+  if ([cam.x, cam.y, cam.z].every(Number.isFinite)) lastGoodCam = { ...cam };
+  else cam = { ...lastGoodCam };
   world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
   viewport.style.setProperty("--z", String(cam.z));
   viewport.style.setProperty("--bx", `${cam.x}px`);
@@ -124,10 +129,14 @@ type GestureLike = Event & { scale: number; clientX: number; clientY: number };
 let pinch: { scale: number; viaWheel: boolean } | null = null;
 function onGesture(e: GestureLike, at = { clientX: e.clientX, clientY: e.clientY }) {
   e.preventDefault();
+  // Safari can report scale 0; dividing by it later is how the zoom became NaN
+  if (e.type !== "gestureend" && !(e.scale > 0 && Number.isFinite(e.scale))) return;
   if (e.type === "gesturestart") pinch = { scale: 1, viaWheel: false };
   else if (e.type === "gestureend") pinch = null;
   else if (pinch) {
-    if (!pinch.viaWheel) zoomAt(at.clientX, at.clientY, (cam.z * e.scale) / pinch.scale);
+    // a real pinch moves a little per event; clamp so one odd value can't fling the zoom
+    const step = Math.min(2, Math.max(0.5, e.scale / pinch.scale));
+    if (!pinch.viaWheel) zoomAt(at.clientX, at.clientY, cam.z * step);
     pinch.scale = e.scale;
   }
 }
@@ -193,15 +202,12 @@ function onKey(e: KeyboardEvent, down: boolean) {
     e.preventDefault();
     return;
   }
-  if (down && selectedFrame && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.code === "KeyL") {
-    copy(frameLink(selectedFrame), "Copied frame link");
-    e.preventDefault();
-    return;
-  }
   if (!down || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "l" || e.key === "L") setPicking(!picking);
+  else if ((e.key === "c" || e.key === "C") && (targets.length || selectedFrame)) copySelection();
   else if (e.key === "Escape") {
-    if (picking) setPicking(false);
+    if (targets.length) setTargets([], false);
+    else if (picking) setPicking(false);
     else select(null);
     $("#connectPop").hidden = true;
   } else if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) fitAll();
@@ -243,7 +249,7 @@ function select(id: string | null) {
   selectedFrame = id;
   for (const [fid, el] of frameEls) el.classList.toggle("selected", fid === id);
   const path = id ? `/f/${fileId}/${id}` : `/f/${fileId}`;
-  if (location.pathname !== path) history.replaceState(null, "", path + (target && target.frameId === id ? `#${target.elementId}` : ""));
+  if (location.pathname !== path) history.replaceState(null, "", path + (id && hashFor(id) ? `#${hashFor(id)}` : ""));
 }
 
 function setPicking(on: boolean) {
@@ -251,9 +257,36 @@ function setPicking(on: boolean) {
   $("#pickBtn").setAttribute("aria-pressed", String(on));
   forEachDoc((doc) => {
     doc.documentElement.toggleAttribute("data-ds-picking", on);
-    if (!on) doc.querySelectorAll("[data-ds-hover]").forEach((n) => n.removeAttribute("data-ds-hover"));
+    if (on) doc.getSelection()?.removeAllRanges();
+    else doc.querySelectorAll("[data-ds-hover]").forEach((n) => n.removeAttribute("data-ds-hover"));
   });
-  if (on) toast("Click any element to copy its link · Option-click for its parent · Esc to stop", 3200);
+  renderPickBar();
+}
+/** Stays up while selecting: how many are selected and the keys that apply. */
+function renderPickBar() {
+  const bar = $("#pickBar");
+  bar.hidden = !picking;
+  document.body.classList.toggle("picking", picking);
+  if (!picking) return;
+  const n = targets.length;
+  const hints = [
+    n ? "<kbd>C</kbd> copy link" : "",
+    `<kbd>⇧</kbd> click to ${n ? "add or remove" : "select several"}`,
+    "<kbd>⌥</kbd> click for parent",
+    `<kbd>Esc</kbd> ${n ? "clear" : "done"}`,
+  ].filter(Boolean);
+  bar.innerHTML = `<b>${n ? `${n} selected` : "Click an element to select it"}</b>${hints.map((h) => `<span>${h}</span>`).join("")}`;
+}
+/** The selected elements in one frame, as a link hash: a,b,c */
+const hashFor = (frameId: string) => targets.filter((t) => t.frameId === frameId).map((t) => t.elementId).join(",");
+/** C: copy the selected elements' link (one per frame), or the selected frame's if none. */
+function copySelection() {
+  if (targets.length) {
+    const frameIds = [...new Set(targets.map((t) => t.frameId))];
+    const n = targets.length;
+    copy(frameIds.map((fid) => frameLink(fid, hashFor(fid))).join("\n"),
+      `Copied ${frameIds.length === 1 ? "link" : `${frameIds.length} links`} to ${n} element${n === 1 ? "" : "s"}`);
+  } else if (selectedFrame) copy(frameLink(selectedFrame), "Copied frame link");
 }
 $("#pickBtn").addEventListener("click", () => setPicking(!picking));
 
@@ -268,9 +301,10 @@ function forEachDoc(fn: (doc: Document, frameId: string, iframe: HTMLIFrameEleme
 
 const PICK_CSS = `
 html { overscroll-behavior: none; }
-html[data-ds-picking] * { cursor: crosshair !important; }
+html[data-ds-picking] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; }
 [data-ds-hover] { outline: 2px solid #6d5dfc !important; outline-offset: -1px !important; }
 [data-ds-target] { outline: 2px solid #f59e0b !important; outline-offset: 2px !important; }
+[data-ds-target] [data-ds]:not([data-ds-hover]) { outline: 1px dashed rgb(245 158 11 / 0.45) !important; outline-offset: -1px !important; }
 `;
 
 function describe(el: Element) {
@@ -340,35 +374,59 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
     hovered?.setAttribute("data-ds-hover", "");
   });
   doc.addEventListener("mouseleave", () => hovered?.removeAttribute("data-ds-hover"));
+  // no text selection (drag or Shift-click) while selecting elements
+  doc.addEventListener("mousedown", (e) => picking && e.preventDefault(), true);
   doc.addEventListener("click", (e) => {
     e.preventDefault(); // designs are static: links and buttons never navigate
     if (!picking) return;
     const el = pickable(e.target, e.altKey);
     if (!el) return;
-    const id = el.getAttribute("data-ds")!;
-    setTarget({ frameId, elementId: id }, false);
-    copy(frameLink(frameId, id), `Copied link to ${describe(el)}`);
+    const t = { frameId, elementId: el.getAttribute("data-ds")! };
+    if (!e.shiftKey) {
+      setTargets([t], false);
+      copy(frameLink(frameId, t.elementId), `Copied link to ${describe(el)}`);
+      return;
+    }
+    // Shift-click toggles; a selected container already includes everything inside it
+    const elOf = (x: Target) => (x.frameId === frameId ? doc.querySelector(`[data-ds="${CSS.escape(x.elementId)}"]`) : null);
+    let next: Target[];
+    if (targets.some((x) => elOf(x) === el)) next = targets.filter((x) => elOf(x) !== el);
+    else {
+      const covering = targets.map(elOf).find((p) => p?.contains(el));
+      if (covering) return void toast(`Already included in ${describe(covering)}`);
+      next = [...targets.filter((x) => !el.contains(elOf(x))), t];
+    }
+    setTargets(next, false);
+    if (!next.length) return void toast("Selection cleared");
+    copySelection();
   }, true);
   doc.addEventListener("submit", (e) => e.preventDefault(), true);
 
-  if (target?.frameId === frameId) markTarget(doc);
+  markTargets(doc, frameId);
 }
 
-function markTarget(doc: Document) {
+/** Outline this frame's selected elements; returns the current (last) one if it's here. */
+function markTargets(doc: Document, frameId: string) {
   doc.querySelectorAll("[data-ds-target]").forEach((n) => n.removeAttribute("data-ds-target"));
-  if (!target) return null;
-  const el = doc.querySelector(`[data-ds="${CSS.escape(target.elementId)}"]`);
-  el?.setAttribute("data-ds-target", "");
-  return el;
+  let current: Element | null = null;
+  for (const t of targets) {
+    if (t.frameId !== frameId) continue;
+    const el = doc.querySelector(`[data-ds="${CSS.escape(t.elementId)}"]`);
+    el?.setAttribute("data-ds-target", "");
+    if (t === targets.at(-1)) current = el;
+  }
+  return current;
 }
 
-function setTarget(t: typeof target, focus: boolean) {
-  target = t;
+function setTargets(ts: Target[], focus: boolean) {
+  targets = ts;
+  renderPickBar();
+  const t = ts.at(-1);
   if (t) select(t.frameId);
-  history.replaceState(null, "", `/f/${fileId}${t ? `/${t.frameId}#${t.elementId}` : selectedFrame ? `/${selectedFrame}` : ""}`);
+  history.replaceState(null, "", `/f/${fileId}${t ? `/${t.frameId}#${hashFor(t.frameId)}` : selectedFrame ? `/${selectedFrame}` : ""}`);
   let found: { el: Element; iframe: HTMLIFrameElement } | null = null;
   forEachDoc((doc, fid, iframe) => {
-    const el = fid === t?.frameId ? markTarget(doc) : (doc.querySelectorAll("[data-ds-target]").forEach((n) => n.removeAttribute("data-ds-target")), null);
+    const el = markTargets(doc, fid);
     if (el && !found) found = { el, iframe };
   });
   if (focus && found) {
@@ -395,7 +453,7 @@ function buildFrameEl(f: FrameSummary) {
   el.innerHTML = `
     <div class="frame-label">
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
-      <button class="copy" title="Copy frame link (${modKey}L when selected)">Copy link <kbd>${modKey}L</kbd></button>
+      <button class="copy" title="Copy frame link (C when selected)">Copy link <kbd>C</kbd></button>
     </div>
     <div class="frame-body"></div>`;
   el.querySelector(".copy")!.addEventListener("click", (e) => {
@@ -584,7 +642,7 @@ function maybeInitialFocus() {
   didInitialFocus = true;
   const hash = location.hash.slice(1);
   if (initialFrameId && frames.has(initialFrameId)) {
-    if (hash) setTarget({ frameId: initialFrameId, elementId: hash }, true);
+    if (hash) setTargets(hash.split(",").map((elementId) => ({ frameId: initialFrameId, elementId })), true);
     else focusFrame(initialFrameId);
   } else fitAll();
 }
@@ -707,7 +765,7 @@ async function load() {
 addEventListener("hashchange", () => {
   const id = location.hash.slice(1);
   const fid = location.pathname.split("/")[3] || selectedFrame;
-  if (id && fid) setTarget({ frameId: fid, elementId: id }, true);
+  if (id && fid) setTargets(id.split(",").map((elementId) => ({ frameId: fid, elementId })), true);
 });
 
 applyCamera();

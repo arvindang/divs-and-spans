@@ -42,7 +42,7 @@ Canvas (web/) ──► /api/files/:id/...  ──►  DesignFile Durable Object
 - **Stable element ids.** On save, every element in `<body>` gets a `data-ds` id (HTMLRewriter). Existing ids are kept across rewrites, so links survive edits. Links look like `/f/<file>/<frame>#<element>`; `get_frame` resolves the fragment to that element's markup and ancestor path.
 - **tokens.css** is injected into every frame before the frame's own styles. The default is empty except for `color-scheme: light dark`; the agent fills it in after its first frame. The canvas forces a scheme with `data-theme` on `<html>` and `color-scheme` on the iframe, so `light-dark()` and `prefers-color-scheme` both work.
 - **Lint is consistency, not taste.** `write_frame` warns about colors and fonts that aren't in tokens.css, a single color scheme, or frames that use no tokens. It never comments on layout or style.
-- **Frames are static.** Frames are agent-written HTML on our origin, so iframes are `sandbox="allow-same-origin"` (no scripts) and the render route sends `script-src 'none'`. The canvas reads the frame DOM for picking and sizing.
+- **Frames are static.** Frames are agent-written HTML on our origin, so the render route sends `script-src 'none'`, which is what keeps them script-free. The canvas iframes are `sandbox="allow-same-origin allow-scripts"` only because Safari won't fire the canvas's own listeners in a script-less sandbox. The canvas reads the frame DOM for picking and sizing.
 
 ## MCP tools
 
@@ -60,7 +60,7 @@ The server's `instructions` (in `src/mcp.ts`, `CONTRACT`) are the only design gu
 
 ## Canvas keys
 
-`L` pick an element to copy its link (Option-click for its parent) · `Space`+drag or drag empty canvas to pan · pinch or ⌘/Ctrl+scroll to zoom · `Shift+1` fit · `Shift+0` 100% · `F` focus selected frame · `H` full height vs one screen · `Esc` cancel.
+`L` select an element to copy its link (Shift-click to select more; a selected container includes everything inside it; Option-click for its parent) · `0`–`9` select a frame · `Tab`/`Shift+Tab` next/previous frame · `C` copy links to the selected elements (or the selected frame) · `Space`+drag or drag empty canvas to pan · pinch or ⌘/Ctrl+scroll to zoom · `Shift+1` fit · `Shift+0` 100% · `F` focus selected frame · `H` full height vs one screen · `Esc` cancel.
 
 ## Not in the MVP yet
 

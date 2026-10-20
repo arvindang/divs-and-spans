@@ -18,7 +18,7 @@ The contract (structural only, the design itself is yours):
 4. On a new file, design the first frame freely, then extract what you used into tokens.css (update_tokens) and write a foundations/styleguide frame that documents palette, type, voice and rules. Later frames follow it.
 5. Every element gets a stable data-ds id when saved. Keep existing data-ds attributes when you rewrite a frame so the person's links keep working.
 
-Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. If a link contains #<id>, it points at one element: get_frame returns that element's markup, so change that element and leave the rest alone.`;
+Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.`;
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
@@ -35,7 +35,7 @@ function buildServer(env: Env, origin: string) {
   const stubFor = (fileId: string) => env.DESIGN_FILES.get(env.DESIGN_FILES.idFromName(fileId));
   const parse = (link: string) => {
     const p = parseLink(link);
-    if (!p) throw new Error(`Couldn't read "${link}" as a Divs & Spans link. Expected ${origin}/f/<file>[/<frame>][#<element>].`);
+    if (!p) throw new Error(`Couldn't read "${link}" as a Divs & Spans link. Expected ${origin}/f/<file>[/<frame>][#<element>[,<element>…]].`);
     return p;
   };
   const wrap =
@@ -106,20 +106,20 @@ function buildServer(env: Env, origin: string) {
     {
       title: "Get frame",
       description:
-        "Read one frame's HTML and version. If the link ends in #<element>, also returns that element's markup and ancestor path — that's what the person is pointing at.",
-      inputSchema: { link: z.string().describe("Frame link, optionally with #element") },
+        "Read one frame's HTML and version. If the link ends in #<element>, also returns that element's markup and ancestor path — that's what the person is pointing at. #<element>,<element>,… returns `elements`, one per id.",
+      inputSchema: { link: z.string().describe("Frame link, optionally with #element or #element,element,…") },
       annotations: { readOnlyHint: true },
     },
     wrap(async ({ link }: { link: string }) => {
-      const { fileId, frameId, elementId } = parse(link);
+      const { fileId, frameId, elementIds = [] } = parse(link);
       if (!frameId) throw new Error("That's a file link. Use get_file, or pass a frame link.");
       const frame = await stubFor(fileId).getFrame(frameId);
-      const element = elementId ? resolveElement(frame.html, elementId) : undefined;
+      const resolve = (id: string) =>
+        resolveElement(frame.html, id) ?? `Element ${id} no longer exists in this frame (it may have been removed in a later version).`;
       return text({
         frame: { id: frame.id, name: frame.name, link: L.frame(fileId, frame.id), version: frame.version, status: frame.status, width: frame.width },
-        ...(elementId
-          ? { element: element ?? `Element ${elementId} no longer exists in this frame (it may have been removed in a later version).` }
-          : {}),
+        ...(elementIds.length === 1 ? { element: resolve(elementIds[0]) } : {}),
+        ...(elementIds.length > 1 ? { elements: elementIds.map(resolve) } : {}),
         html: frame.html,
       });
     }),
