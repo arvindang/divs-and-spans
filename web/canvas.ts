@@ -31,6 +31,8 @@ const world = $("#world");
 let file: FileState | null = null;
 const frames = new Map<string, FrameSummary>();
 const frameEls = new Map<string, HTMLElement>();
+/** Frame ids in canvas order; 0–9 select the first ten. */
+let frameOrder: string[] = [];
 let tokensVersion = 0;
 const systemScheme: Scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let themeMode = prefs.get<ThemeMode>("theme", systemScheme);
@@ -45,6 +47,7 @@ let didInitialFocus = false;
 const viewportHeightFor = (w: number) => (w <= 480 ? 844 : w <= 900 ? 1112 : 900);
 const widthOf = (f: FrameSummary) => f.width ?? defaultWidth;
 const schemes = (): Scheme[] => (themeMode === "both" ? ["light", "dark"] : [themeMode]);
+const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 const frameLink = (frameId: string, el?: string) => `${location.origin}/f/${fileId}/${frameId}${el ? `#${el}` : ""}`;
 
 // ---------- camera ----------
@@ -95,6 +98,7 @@ function focusFrame(id: string) {
 function onWheel(e: { deltaX: number; deltaY: number; deltaMode: number; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; clientX: number; clientY: number }) {
   const scale = e.deltaMode === 1 ? 16 : 1;
   if (e.ctrlKey || e.metaKey) {
+    if (pinch) pinch.viaWheel = true;
     zoomAt(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * scale * 0.01));
   } else {
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
@@ -109,6 +113,27 @@ viewport.addEventListener("wheel", (e) => {
   wheelLatch = { to: "canvas", t: performance.now() };
   onWheel(e);
 }, { passive: false });
+
+/**
+ * Safari reports trackpad pinch as gesture* events, and zooms the whole page
+ * unless they're cancelled — including when the pinch starts over a frame.
+ * Turn them into canvas zoom, unless the same pinch is also arriving as
+ * ctrl+wheel (then that path zooms and this one only cancels).
+ */
+type GestureLike = Event & { scale: number; clientX: number; clientY: number };
+let pinch: { scale: number; viaWheel: boolean } | null = null;
+function onGesture(e: GestureLike, at = { clientX: e.clientX, clientY: e.clientY }) {
+  e.preventDefault();
+  if (e.type === "gesturestart") pinch = { scale: 1, viaWheel: false };
+  else if (e.type === "gestureend") pinch = null;
+  else if (pinch) {
+    if (!pinch.viaWheel) zoomAt(at.clientX, at.clientY, (cam.z * e.scale) / pinch.scale);
+    pinch.scale = e.scale;
+  }
+}
+for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+  addEventListener(type, (e) => onGesture(e as GestureLike), { passive: false });
+}
 
 /**
  * A wheel gesture sticks to whatever it started on until it pauses, so
@@ -185,7 +210,12 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, cam.z / 1.25);
   else if (e.key === "f" && selectedFrame) focusFrame(selectedFrame);
   else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
-  else return;
+  else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
+  else if (e.key === "Tab" && frameOrder.length) {
+    const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
+    const n = frameOrder.length;
+    selectAndReveal(frameOrder[i < 0 ? (e.shiftKey ? n - 1 : 0) : (i + (e.shiftKey ? n - 1 : 1)) % n]);
+  }  else return;
   e.preventDefault();
 }
 addEventListener("keydown", (e) => onKey(e, true));
@@ -196,6 +226,19 @@ addEventListener("blur", () => {
 });
 
 // ---------- selection & picking ----------
+/** Select a frame from the keyboard, panning it into view if it's off screen. */
+function selectAndReveal(id: string) {
+  select(id);
+  const r = frameEls.get(id)!.getBoundingClientRect();
+  const vw = viewport.clientWidth;
+  const vh = viewport.clientHeight;
+  const xOk = r.left >= 0 && r.right <= vw;
+  const yOk = r.top >= 90 && r.top < vh * 0.8; // label clears the toolbar
+  if (xOk && yOk) return;
+  if (!xOk) cam.x += r.width > vw - 80 ? 40 - r.left : vw / 2 - (r.left + r.width / 2);
+  if (!yOk) cam.y += 110 - r.top;
+  applyCamera();
+}
 function select(id: string | null) {
   selectedFrame = id;
   for (const [fid, el] of frameEls) el.classList.toggle("selected", fid === id);
@@ -275,6 +318,9 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
     const p = toParent(e);
     onWheel({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, ...p });
   }, { passive: false });
+  for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+    doc.addEventListener(type, (e) => onGesture(e as GestureLike, toParent(e as GestureLike & MouseEvent)), { passive: false });
+  }
   doc.addEventListener("keydown", (e) => onKey(e, true));
   doc.addEventListener("keyup", (e) => onKey(e, false));
   doc.addEventListener("pointerdown", () => {
@@ -348,8 +394,8 @@ function buildFrameEl(f: FrameSummary) {
   el.dataset.id = f.id;
   el.innerHTML = `
     <div class="frame-label">
-      <span class="name"></span><span class="meta"></span>
-      <button class="copy" title="Copy frame link (⌘L when selected)">Copy link</button>
+      <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
+      <button class="copy" title="Copy frame link (${modKey}L when selected)">Copy link <kbd>${modKey}L</kbd></button>
     </div>
     <div class="frame-body"></div>`;
   el.querySelector(".copy")!.addEventListener("click", (e) => {
@@ -383,7 +429,10 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: n
 
   const vh = viewportHeightFor(width);
   const next = document.createElement("iframe");
-  next.setAttribute("sandbox", "allow-same-origin"); // no scripts, no forms, no navigation
+  // allow-scripts only so Safari runs the listeners instrument() attaches; the
+  // render's CSP (script-src 'none') still blocks every script the frame carries.
+  // Still no forms, popups or top navigation.
+  next.setAttribute("sandbox", "allow-same-origin allow-scripts");
   next.setAttribute("loading", "eager");
   next.title = `${f.name} (${scheme})`;
   next.dataset.src = src;
@@ -507,6 +556,12 @@ function renderAll() {
     (a, b) => Number(b.foundations) - Number(a.foundations) || a.position - b.position,
   );
   for (const f of ordered) renderFrame(f);
+  frameOrder = ordered.map((f) => f.id);
+  frameOrder.forEach((id, i) => {
+    const key = frameEls.get(id)!.querySelector<HTMLElement>(".key")!;
+    key.textContent = i < 10 ? String(i) : "";
+    key.title = i < 10 ? `Press ${i} to select` : "";
+  });
   for (const [id, el] of frameEls) {
     if (!frames.has(id)) {
       el.remove();

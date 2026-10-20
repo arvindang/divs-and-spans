@@ -15,8 +15,10 @@ const json = (data: unknown, status = 200) =>
 
 /**
  * Frames are agent-authored HTML served from our own origin, so they must
- * never run script. The canvas iframes are sandboxed too; this covers someone
- * opening a render URL directly.
+ * never run script. This CSP is what enforces that, on the canvas too: the
+ * canvas iframes allow scripts (Safari won't fire the canvas's own listeners
+ * in a script-less sandbox), so script-src 'none' is the only thing stopping
+ * frame scripts there.
  */
 const FRAME_CSP = "default-src * data: blob: 'unsafe-inline'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 

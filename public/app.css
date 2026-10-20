@@ -159,6 +159,13 @@ select.btn { appearance: none; padding-right: 10px; }
   padding: 0;
 }
 .frame-label .copy:hover { color: var(--accent); }
+.frame-label kbd {
+  font: 0.85em var(--mono);
+  border: calc(1px / var(--z, 1)) solid var(--line);
+  border-radius: 0.3em;
+  padding: 0 0.3em;
+  margin-left: 0.3em;
+}
 /* em here is the label's own font size, so this holds at every zoom level */
 @container (max-width: 24em) {
   .frame-label .copy { display: none; }
@@ -166,6 +173,9 @@ select.btn { appearance: none; padding-right: 10px; }
   .frame:hover .frame-label .meta { display: none; }
 }
 .frame.selected .frame-label .name { color: var(--accent); }
+.frame-label .key { display: none; margin: 0; flex: none; }
+.frame:is(:hover, .selected) .frame-label .key:not(:empty) { display: inline; }
+.viewport.tiny .frame-label .key { display: none !important; }
 .frame-body { display: flex; gap: 40px; }
 .screen {
   position: relative;
