@@ -75,8 +75,17 @@ const HEADLINES = [
   ["Element links followed", "SUM(_sample_interval)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
   ["Canvases with an element link", "count(DISTINCT index1)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
   ["Exports", "SUM(_sample_interval)", "blob1 = 'export'"],
-  ["PNGs", "SUM(_sample_interval)", "blob1 = 'png'"],
-  ["  rendered (not cached)", "SUM(_sample_interval)", "blob1 = 'png' AND blob5 != 'cached'"],
+  ["PNGs copied", "SUM(_sample_interval)", "blob1 = 'png' AND blob2 = 'copy' AND blob5 != 'error'"],
+  ["PNGs downloaded", "SUM(_sample_interval)", "blob1 = 'png' AND blob2 = 'download' AND blob5 != 'error'"],
+  ["PNG zips", "SUM(_sample_interval)", "blob1 = 'png' AND blob2 = 'zip' AND blob5 != 'error'"],
+  ["People using PNGs", "count(DISTINCT blob4)", "blob1 = 'png' AND blob4 != ''"],
+  ["PNG errors", "SUM(_sample_interval)", "blob1 = 'png' AND blob5 = 'error'"],
+  ["Browser Run renders", "SUM(_sample_interval * double3)", "blob1 = 'browser'"],
+  ["  browser launches", "SUM(_sample_interval)", "blob1 = 'browser' AND blob2 = 'launch'"],
+  ["  connected minutes", "SUM(_sample_interval * double1) / 60000", "blob1 = 'browser'"],
+  // after each request the browser can idle up to keep_alive (2 min, src/screenshot.ts) until the next one
+  // or until it closes; Browser Run may bill that time, so this is the ceiling on top of connected minutes
+  ["  + idle minutes (at most)", "SUM(_sample_interval) * 2", "blob1 = 'browser'"],
   ["MCP connects", "SUM(_sample_interval)", "blob1 = 'connect'"],
 ];
 

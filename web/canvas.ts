@@ -462,6 +462,8 @@ function pngQuery() {
   return new URLSearchParams({
     w: String(d.w), h: String(d.h), kind: d.kind, radius: String(d.radius), st: String(d.safeTop), sb: String(d.safeBottom),
     cutout: d.cutout ?? "", chrome: showChrome ? "1" : "0", full: fullHeight ? "1" : "0", theme: themeMode,
+    // for analytics only: who uses PNGs, anonymously
+    viewer: viewerId(),
   });
 }
 /** The selection to render: an explicit frame, else the selected elements in the current one's frame, else the selected frame. */
@@ -504,7 +506,7 @@ function copyImage(frameId?: string) {
   if (!target) return;
   toast("Rendering image…", 30000);
   let scale: string | null = null;
-  const png = fetchPng(target.url).then((r) => ((scale = r.scale), r.blob));
+  const png = fetchPng(`${target.url}&via=copy`).then((r) => ((scale = r.scale), r.blob));
   const saveInstead = () => png.then((b) => {
     saveBlob(b, target.file);
     toast(`Couldn't copy here, so saved ${escapeHtml(target.file)}${scaleNote(scale)} instead`, 3500);
@@ -521,7 +523,7 @@ async function savePng(frameId?: string) {
   if (!target) return;
   toast("Rendering image…", 30000);
   try {
-    const { blob, scale } = await fetchPng(target.url);
+    const { blob, scale } = await fetchPng(`${target.url}&via=download`);
     saveBlob(blob, target.file);
     toast(`Saved ${escapeHtml(target.file)}${scaleNote(scale)}`);
   } catch (err) {

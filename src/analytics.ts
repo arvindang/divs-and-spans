@@ -4,22 +4,22 @@ import type { Env } from "./index";
  * Product analytics in Workers Analytics Engine (dataset divs_and_spans_events).
  * Every event uses the same columns so one query shape fits all of them:
  *
- *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png"
- *   blob2 name     tool name · MCP client name · "canvas" · "web" · png "frame" | "element" | "zip"
+ *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser"
+ *   blob2 name     tool name · MCP client name · "canvas" · "web" · png "copy" | "download" | "zip" · browser "launch" | "reuse"
  *   blob3 file     hashed file id ("" when there is none)
- *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id
- *   blob5 detail   tool outcome/variant · device class · exported frame count · png "cached" | "2x" | "1x"
+ *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, png)
+ *   blob5 detail   tool outcome/variant · device class · exported frame count · png "frame" | "element" | frame count | "error"
  *   blob6 country
- *   double1 ms     tool latency · session length · png render time
+ *   double1 ms     tool latency · session length · png request time · browser connected time
  *   double2        html bytes written · engaged ms · zip or png bytes
- *   double3        lint warnings
+ *   double3        lint warnings · png and browser renders (0 when every PNG came from cache)
  *   index1         hashed file id, so sampling (if it ever kicks in) is per file
  *
  * File ids are capability URLs (anyone with one can edit), so they are hashed
  * before they leave the Durable Object. Frame HTML and prompts are never recorded.
  */
 export interface AnalyticsEvent {
-  event: "tool" | "connect" | "session" | "create" | "export" | "png";
+  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser";
   name: string;
   fileId?: string;
   actor?: string;
@@ -28,6 +28,8 @@ export interface AnalyticsEvent {
   ms?: number;
   size?: number;
   warnings?: number;
+  /** double3 for events that aren't tool calls (png renders). */
+  count?: number;
 }
 
 const hashes = new Map<string, string>();
@@ -50,7 +52,7 @@ export async function track(env: Env, e: AnalyticsEvent): Promise<void> {
     const file = e.fileId ? await hashFileId(e.fileId) : "";
     env.EVENTS.writeDataPoint({
       blobs: [e.event, e.name, file, (e.actor ?? "").slice(0, 96), e.detail ?? "", e.country ?? ""],
-      doubles: [e.ms ?? 0, e.size ?? 0, e.warnings ?? 0],
+      doubles: [e.ms ?? 0, e.size ?? 0, e.warnings ?? e.count ?? 0],
       indexes: [file],
     });
   } catch {}

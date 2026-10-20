@@ -134,35 +134,48 @@ async function shoot(page: Page, html: string, tokens: string, v: ShotView, elem
 }
 
 /** Reuse a warm browser when one is running; otherwise launch one that stays up for the next copy. */
-async function getBrowser(endpoint: BrowserWorker): Promise<Browser> {
+async function getBrowser(endpoint: BrowserWorker): Promise<{ browser: Browser; launched: boolean }> {
   try {
     for (const s of await puppeteer.sessions(endpoint)) {
       try {
-        return await puppeteer.connect(endpoint, s.sessionId);
+        return { browser: await puppeteer.connect(endpoint, s.sessionId), launched: false };
       } catch {
         // closed after it was listed
       }
     }
   } catch {}
-  return puppeteer.launch(endpoint, { keep_alive: 120_000 });
+  return { browser: await puppeteer.launch(endpoint, { keep_alive: KEEP_ALIVE_MS }), launched: true };
+}
+/** How long a launched browser idles before Browser Run closes it; billed time, if idle counts. */
+export const KEEP_ALIVE_MS = 120_000;
+
+/** For analytics: what one request cost in Browser Run terms. */
+export interface ShooterStats {
+  launched: boolean;
+  renders: number;
+  /** Connected time, from getting a browser to letting go of it. */
+  ms: number;
 }
 
 export interface Shooter {
   shoot(html: string, tokens: string, view: ShotView, elements?: string[]): Promise<Shot>;
-  close(): Promise<void>;
+  close(): Promise<ShooterStats>;
 }
 
 /** One browser context for one request; a zip shoots every frame through the same page. */
 export async function openShooter(endpoint: BrowserWorker): Promise<Shooter> {
-  const browser = await getBrowser(endpoint);
+  const started = Date.now();
+  const { browser, launched } = await getBrowser(endpoint);
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
+  let renders = 0;
   return {
-    shoot: (html, tokens, view, elements = []) => shoot(page, html, tokens, view, elements),
+    shoot: (html, tokens, view, elements = []) => (renders++, shoot(page, html, tokens, view, elements)),
     async close() {
       await context.close().catch(() => {});
       // disconnect, not close: other requests may share this browser
       await browser.disconnect().catch(() => {});
+      return { launched, renders, ms: Date.now() - started };
     },
   };
 }

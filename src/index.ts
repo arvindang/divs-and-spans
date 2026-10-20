@@ -105,19 +105,18 @@ export default {
         if (!frame.html) return json({ error: "This frame has no content yet" }, 404);
         const view = parseView(url.searchParams);
         const elements = (url.searchParams.get("el") ?? "").split(",").filter((id) => /^[a-z0-9_-]{2,32}$/i.test(id)).slice(0, 50);
-        const started = Date.now();
+        const usage = pngUsage(env, ctx, request, fileId, url.searchParams.get("via") === "copy" ? "copy" : "download");
         let shooter: Shooter | null = null;
         try {
-          const { png, scale, cached } = await cachedShot(ctx, `${fileId}/${frameId}/${frame.version}/${tokens.version}/${viewKey(view)}/${elements.join(",")}`, async () => {
+          const { png, scale } = await cachedShot(ctx, `${fileId}/${frameId}/${frame.version}/${tokens.version}/${viewKey(view)}/${elements.join(",")}`, async () => {
             shooter = await openShooter(env.BROWSER);
             return shooter.shoot(frame.html, tokens.css, view, elements);
           });
-          ctx.waitUntil(track(env, { event: "png", name: elements.length ? "element" : "frame", fileId, detail: cached ? "cached" : `${scale}x`, country: countryOf(request), ms: Date.now() - started, size: png.byteLength }));
+          await usage.done(shooter, elements.length ? "element" : "frame", png.byteLength);
           return new Response(png, { headers: { "Content-Type": "image/png", "X-DS-Scale": String(scale), "Cache-Control": "no-cache" } });
         } catch (e) {
+          await usage.done(shooter, "error");
           return shotError(e);
-        } finally {
-          await (shooter as Shooter | null)?.close();
         }
       }
 
@@ -125,7 +124,7 @@ export default {
       if (m) {
         const data = await stub(m[1]).getExport();
         const view = parseView(url.searchParams);
-        const started = Date.now();
+        const usage = pngUsage(env, ctx, request, data.id, "zip");
         let shooter: Shooter | null = null;
         try {
           const files: Record<string, Uint8Array> = {};
@@ -139,7 +138,7 @@ export default {
           }
           // PNGs are already compressed: store them
           const zip = zipSync(files, { level: 0 });
-          ctx.waitUntil(track(env, { event: "png", name: "zip", fileId: data.id, detail: String(data.frames.length), country: countryOf(request), ms: Date.now() - started, size: zip.byteLength }));
+          await usage.done(shooter, String(data.frames.length), zip.byteLength);
           return new Response(zip, {
             headers: {
               "Content-Type": "application/zip",
@@ -148,9 +147,8 @@ export default {
             },
           });
         } catch (e) {
+          await usage.done(shooter, "error");
           return shotError(e);
-        } finally {
-          await (shooter as Shooter | null)?.close();
         }
       }
 
@@ -204,6 +202,25 @@ async function cachedShot(
     headers: { "Content-Type": "image/png", "X-DS-Scale": String(shot.scale), "Cache-Control": "public, max-age=2592000" },
   })));
   return { ...shot, cached: false };
+}
+
+/**
+ * Analytics for one PNG request: a "png" event for the feature (copy, download
+ * or zip, by whom, how many renders it took) and, when a browser was used, a
+ * "browser" event for what Browser Run bills: launches and connected time.
+ * Lets go of the browser too, so call done() exactly once.
+ */
+function pngUsage(env: Env, ctx: ExecutionContext, request: Request, fileId: string, via: "copy" | "download" | "zip") {
+  const started = Date.now();
+  const viewer = new URL(request.url).searchParams.get("viewer");
+  const base = { fileId, country: countryOf(request), actor: viewer && /^[a-z0-9]{16}$/.test(viewer) ? viewer : "" };
+  return {
+    async done(shooter: Shooter | null, detail: string, size = 0) {
+      const stats = await shooter?.close();
+      ctx.waitUntil(track(env, { event: "png", name: via, detail, ms: Date.now() - started, size, count: stats?.renders ?? 0, ...base }));
+      if (stats) ctx.waitUntil(track(env, { event: "browser", name: stats.launched ? "launch" : "reuse", detail: via, ms: stats.ms, count: stats.renders, ...base }));
+    },
+  };
 }
 
 function shotError(e: unknown): Response {
