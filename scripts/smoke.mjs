@@ -147,6 +147,7 @@ const episode = `<main><a href="#${claim.frame_id}">Back to today</a><button dat
   <a href="#notes">Notes</a><section id="notes"></section><a href="#nowhere">Broken</a><a href="https://example.com">Out</a></main>`;
 const f3 = await call("write_frame", { link: file_link, name: "02 Episode", html: episode });
 ok(f3.warnings.some((w) => w.startsWith('Dead link "Broken"')), "write_frame flags a dead #link");
+ok(f3.warnings.some((w) => w.startsWith("No media queries")) && !JSON.stringify(w2.warnings).includes("No media queries"), "lint asks fixed layouts to adapt, not ones using clamp()");
 const withFlows = await call("get_file", { link: file_link });
 const fromEpisode = withFlows.flows.filter((f) => f.to === claim.frame_id);
 ok(fromEpisode.length === 2 && fromEpisode.some((f) => f.to_element === btnId && f.text === "Replay"), "get_file returns both flows, one landing on an element");

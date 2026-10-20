@@ -18,6 +18,7 @@ The contract (structural only, the design itself is yours):
 4. On a new file, design the first frame freely, then extract what you used into tokens.css (update_tokens) and write a foundations/styleguide frame that documents palette, type, voice and rules. Later frames follow it.
 5. Every element gets a stable data-ds id when saved. Keep existing data-ds attributes when you rewrite a frame so the person's links keep working.
 6. Link screens with real links: href="#<frame_id>" on an <a>, or data-to="<frame_id>" on anything else (e.g. a <button>). Add /<element_id> to land on one element in that frame. The canvas draws these as the flow between frames, and get_file returns them as \`flows\`.
+7. Frames are responsive by default. The person previews them on a device of their choice (iPhone 402–440 wide, iPad 744–1032, laptop 1280, desktop 1440, Android 412), so let layouts adapt with media queries, container queries or clamp(). Pass \`width\` only for a screen that exists on one kind of device (e.g. 402 for a phone-only screen); it marks the screen as device-specific and opens the file on that kind of device, but the person can still preview it at any size. Don't draw status bars, notches or home indicators: the canvas draws device chrome. Keep content clear of it with padding of var(--ds-safe-top) and var(--ds-safe-bottom), which are 0 on desktop.
 
 Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.`;
 
@@ -139,7 +140,7 @@ function buildServer(env: Env, origin: string) {
         link: z.string().describe("File link (new frame) or frame link (edit existing)"),
         name: z.string().max(120).optional().describe("Frame name, e.g. '01 Home — empty state'"),
         task: z.string().max(200).describe("Short description of what you're doing, shown on the canvas"),
-        width: z.number().int().min(240).max(3840).optional().describe("Viewport width in px if this frame targets a specific device; omit to use the canvas setting"),
+        width: z.number().int().min(240).max(3840).optional().describe("Only for a screen that exists on one kind of device: its width in px (e.g. 402 phone, 820 tablet). Omit for responsive frames. The person can preview any frame at any size."),
       },
     },
     wrap(async (a: { link: string; name?: string; task: string; width?: number }) => {
@@ -178,7 +179,7 @@ function buildServer(env: Env, origin: string) {
       const tokens = await stub.getTokens();
       const { dead } = await stub.getFlows();
       const warnings = [
-        ...lintFrame(result.html, tokens.css),
+        ...lintFrame(result.html, tokens.css, { pinned: !!result.frame.width }),
         ...dead
           .filter((d) => d.frame === result.frame.id)
           .map((d) => `Dead link${d.text ? ` "${d.text}"` : ""} (${d.link}): ${d.reason}. Point it at a frame id from get_file, or fix it once the target frame exists.`),

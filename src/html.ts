@@ -69,7 +69,8 @@ export async function renderForCanvas(
   html: string,
   opts: { tokensHref: string; theme?: "light" | "dark" },
 ): Promise<string> {
-  const link = `<link rel="stylesheet" href="${opts.tokensHref}" data-ds-tokens>`;
+  // safe areas default to 0; the canvas overrides them for the device it's showing
+  const link = `<style data-ds-safe>:root{--ds-safe-top:0px;--ds-safe-bottom:0px}</style><link rel="stylesheet" href="${opts.tokensHref}" data-ds-tokens>`;
   let injected = false;
   const rewriter = new HTMLRewriter()
     .on("head", {
@@ -181,7 +182,7 @@ function authoredCss(html: string): string {
 /**
  * Consistency checks only — never taste. Returned to the agent so it can self-correct.
  */
-export function lintFrame(html: string, rawTokensCss: string): string[] {
+export function lintFrame(html: string, rawTokensCss: string, opts: { pinned: boolean }): string[] {
   const warnings: string[] = [];
   const tokensCss = rawTokensCss.replace(/\/\*[\s\S]*?\*\//g, "");
   const css = authoredCss(html);
@@ -229,6 +230,17 @@ export function lintFrame(html: string, rawTokensCss: string): string[] {
     }
   }
 
+  // anything that adapts to the viewport counts; only a layout with none of it gets flagged
+  if (!opts.pinned && !/@media|@container|clamp\(|\bm(?:in|ax)\(|minmax\(|auto-(?:fit|fill)|flex-wrap\s*:\s*wrap|\d(?:vw|vi|cqi|cqw)\b/i.test(css)) {
+    warnings.push(
+      "No media queries, container queries or clamp(): the person previews frames at phone, tablet and desktop widths. Let the layout adapt, or pass width if this screen only exists on one kind of device.",
+    );
+  }
+  if (/>[^<]*\b9:41\b/.test(html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ""))) {
+    warnings.push(
+      "This looks like a hand-drawn status bar (9:41). The canvas draws device chrome; drop it and pad the top with var(--ds-safe-top) instead.",
+    );
+  }
   if (/<script[\s>]/i.test(html)) {
     warnings.push("Scripts don't run on the canvas; frames are static renders. Express states as separate frames.");
   }

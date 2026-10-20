@@ -1,5 +1,6 @@
 import { $, copy, escapeHtml, prefs, rememberFile, toast, wireCopyButtons } from "./shared";
 import { linksIn, resolveLink } from "../src/flows";
+import { DEFAULT_BY_KIND, DEVICES, customDevice, deviceById, deviceForLegacyWidth, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
 
 // ---------- types (mirror src/design-file.ts) ----------
 interface FrameSummary {
@@ -37,7 +38,14 @@ let frameOrder: string[] = [];
 let tokensVersion = 0;
 const systemScheme: Scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 let themeMode = prefs.get<ThemeMode>("theme", systemScheme);
-let defaultWidth = prefs.get<number>("width", 1440);
+const legacyWidth = prefs.get<number | null>("width", null);
+/** Each file remembers its own device; a file you haven't picked one for starts from what its frames are pinned to. */
+const fileDevice = prefs.get<string | null>(`device:${fileId}`, null);
+let deviceChosen = fileDevice !== null;
+let deviceId = fileDevice ?? prefs.get<string>("device", legacyWidth ? deviceForLegacyWidth(legacyWidth) : DEFAULT_BY_KIND.desktop);
+let custom = prefs.get<CustomSize | null>("custom", null);
+if (!deviceById(deviceId) && !(deviceId === "custom" && custom)) deviceId = DEFAULT_BY_KIND.desktop;
+let showChrome = prefs.get<boolean>("chrome", false);
 let fullHeight = prefs.get<boolean>("fullHeight", false);
 let picking = false;
 let flowsAll = prefs.get<boolean>("flowsAll", false);
@@ -49,8 +57,24 @@ let cam = { x: 80, y: 120, z: 0.5 };
 let lastGoodCam = { ...cam };
 let didInitialFocus = false;
 
-const viewportHeightFor = (w: number) => (w <= 480 ? 844 : w <= 900 ? 1112 : 900);
-const widthOf = (f: FrameSummary) => f.width ?? defaultWidth;
+/**
+ * Every frame previews on the chosen device, like Safari's responsive design
+ * mode. A frame's own width only tells the agent and the lint it's device-specific.
+ */
+const currentDevice = (): Device => (deviceId === "custom" && custom ? customDevice(custom) : deviceById(deviceId)!);
+function saveDevice() {
+  deviceChosen = true;
+  prefs.set("device", deviceId);
+  prefs.set(`device:${fileId}`, deviceId);
+}
+/** For a file with no device picked yet: the kind most of its frames are pinned to. */
+function deviceFromPins(fs: FrameSummary[]) {
+  const kinds = fs.filter((f) => f.width && !f.foundations).map((f) => kindForWidth(f.width!));
+  if (!kinds.length) return;
+  const top = (["phone", "tablet", "desktop"] as DeviceKind[]).sort((a, b) => kinds.filter((k) => k === b).length - kinds.filter((k) => k === a).length)[0];
+  deviceId = DEFAULT_BY_KIND[top];
+  deviceSel.value = deviceId;
+}
 const schemes = (): Scheme[] => (themeMode === "both" ? ["light", "dark"] : [themeMode]);
 const frameLink = (frameId: string, el?: string) => `${location.origin}/f/${fileId}/${frameId}${el ? `#${el}` : ""}`;
 
@@ -223,6 +247,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, cam.z / 1.25);
   else if (e.key === "f" && selectedFrame) focusFrame(selectedFrame);
   else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
+  else if (e.key === "d" || e.key === "D") setChrome(!showChrome);
   else if (e.key === "p" || e.key === "P") setFlowsAll(!flowsAll);
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
@@ -675,7 +700,11 @@ function buildFrameEl(f: FrameSummary) {
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
       <button class="copy" title="Copy frame link (C when selected)">Copy link <kbd>C</kbd></button>
     </div>
-    <div class="frame-body"></div>`;
+    <div class="frame-body"></div>
+    <i class="resize e" data-axis="e" title="Drag to resize every frame"></i>
+    <i class="resize s" data-axis="s" title="Drag to resize every frame"></i>
+    <i class="resize se" data-axis="se" title="Drag to resize every frame"></i>`;
+  el.querySelectorAll<HTMLElement>(".resize").forEach((h) => wireResize(h, f.id));
   el.querySelector(".copy")!.addEventListener("click", (e) => {
     e.stopPropagation();
     copy(frameLink(f.id), "Copied frame link");
@@ -694,18 +723,48 @@ function buildScreen(scheme: Scheme) {
       <div class="skeleton"><i></i><i></i><i></i><i></i><i></i></div>
       <div class="task"><span class="pulse"></span><span class="task-text"></span></div>
     </div>
+    <div class="chrome" aria-hidden="true">
+      <div class="status"><span class="time">9:41</span><span class="icons">${STATUS_ICONS}</span></div>
+      <i class="cutout"></i><i class="home-bar"></i>
+    </div>
     <div class="scheme">${scheme}</div>`;
   return s;
 }
 
+const STATUS_ICONS = `<svg viewBox="0 0 18 12" width="18" height="12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>` +
+  `<svg viewBox="0 0 16 12" width="16" height="12"><path d="M8 2.6a10 10 0 0 1 6.6 2.5l1.2-1.3A11.8 11.8 0 0 0 8 .8 11.8 11.8 0 0 0 .2 3.8l1.2 1.3A10 10 0 0 1 8 2.6zm0 3.6a6.3 6.3 0 0 1 4.2 1.6l1.2-1.3A8 8 0 0 0 8 4.4a8 8 0 0 0-5.4 2.1l1.2 1.3A6.3 6.3 0 0 1 8 6.2zm0 3.5a2.6 2.6 0 0 1 1.7.7L8 12.2l-1.7-1.8a2.6 2.6 0 0 1 1.7-.7z"/></svg>` +
+  `<svg viewBox="0 0 28 13" width="27" height="13"><rect x="0.5" y="0.5" width="24" height="12" rx="3.8" fill="none" stroke="currentColor" opacity=".4"/><rect x="2.5" y="2.5" width="18" height="8" rx="2.2"/><path d="M26 4.5v4a2.2 2.2 0 0 0 0-4z" opacity=".45"/></svg>`;
+
+/** Device size, corner radius and safe areas on a screen; chrome is drawn only when D is on. */
+function dressScreen(screen: HTMLElement, d: Device) {
+  screen.classList.toggle("device", showChrome && d.radius > 0);
+  screen.dataset.kind = d.kind;
+  screen.dataset.cutout = d.cutout ?? "";
+  screen.style.setProperty("--radius", `${d.radius}px`);
+  screen.style.setProperty("--safe-top", `${d.safeTop}px`);
+  screen.style.setProperty("--safe-bottom", `${d.safeBottom}px`);
+}
+
+/** Frames pad around the device's status bar and home indicator with var(--ds-safe-top/bottom). */
+function applySafeArea(iframe: HTMLIFrameElement, d: Device) {
+  const doc = iframe.contentDocument;
+  if (!doc?.head) return;
+  let style = doc.head.querySelector<HTMLStyleElement>("style[data-ds-device]");
+  if (!style) {
+    style = doc.createElement("style");
+    style.setAttribute("data-ds-device", "");
+    doc.head.append(style);
+  }
+  style.textContent = `:root { --ds-safe-top: ${d.safeTop}px; --ds-safe-bottom: ${d.safeBottom}px; }`;
+}
+
 /** Load a new render behind the current one and swap on load, so updates don't flash. */
-function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: number) {
+function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, d: Device) {
   const src = frameSrc(f, scheme);
   const current = screen.querySelector<HTMLIFrameElement>("iframe:not([data-loading])");
   if (current?.dataset.src === src) return;
   screen.querySelectorAll("iframe[data-loading]").forEach((n) => n.remove());
 
-  const vh = viewportHeightFor(width);
   const next = document.createElement("iframe");
   // allow-scripts only so Safari runs the listeners instrument() attaches; the
   // render's CSP (script-src 'none') still blocks every script the frame carries.
@@ -715,10 +774,13 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: n
   next.title = `${f.name} (${scheme})`;
   next.dataset.src = src;
   next.dataset.loading = "";
-  next.style.cssText = `position:absolute;inset:0 auto auto 0;width:${width}px;height:${vh}px;opacity:0;color-scheme:${scheme}`;
+  next.style.cssText = `position:absolute;inset:0 auto auto 0;width:${d.w}px;height:${d.h}px;opacity:0;color-scheme:${scheme}`;
   next.addEventListener("load", () => {
-    const h = frameHeight(next, width);
-    next.style.cssText = `width:${width}px;height:${h}px;color-scheme:${scheme}`;
+    // the device may have changed while this loaded
+    const dev = currentDevice();
+    applySafeArea(next, dev);
+    const h = frameHeight(next, dev);
+    next.style.cssText = `width:${dev.w}px;height:${h}px;color-scheme:${scheme}`;
     delete next.dataset.loading;
     current?.remove();
     screen.style.height = `${h}px`;
@@ -732,8 +794,8 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, width: n
 }
 
 /** Screen mode shows one device viewport and the document scrolls inside; full height grows to the content. */
-function frameHeight(iframe: HTMLIFrameElement, width: number) {
-  const vh = viewportHeightFor(width);
+function frameHeight(iframe: HTMLIFrameElement, d: Device) {
+  const vh = d.h;
   if (!fullHeight) return vh;
   iframe.style.height = `${vh}px`; // measure at device height so 100vh layouts don't feed back
   return Math.min(12000, Math.max(vh, iframe.contentDocument?.documentElement.scrollHeight ?? vh));
@@ -744,16 +806,18 @@ function resizeScreens() {
   for (const [id, el] of frameEls) {
     const f = frames.get(id);
     if (!f) continue;
-    const width = widthOf(f);
+    const d = currentDevice();
     for (const screen of el.querySelectorAll<HTMLElement>(".screen")) {
-      screen.style.width = `${width}px`;
+      screen.style.width = `${d.w}px`;
+      dressScreen(screen, d);
       const iframe = screen.querySelector<HTMLIFrameElement>("iframe:not([data-loading])");
       if (!iframe) {
-        screen.style.height = `${viewportHeightFor(width)}px`;
+        screen.style.height = `${d.h}px`;
         continue;
       }
-      iframe.style.width = `${width}px`;
-      const h = frameHeight(iframe, width);
+      iframe.style.width = `${d.w}px`;
+      applySafeArea(iframe, d);
+      const h = frameHeight(iframe, d);
       iframe.style.height = screen.style.height = `${h}px`;
     }
     syncPairHeights(id);
@@ -761,9 +825,62 @@ function resizeScreens() {
   scheduleFlows();
 }
 
+// ---------- resize (Safari's responsive design mode) ----------
+function wireResize(handle: HTMLElement, frameId: string) {
+  let drag: { x: number; y: number; w: number; h: number; screens: number; base: string } | null = null;
+  let raf = 0;
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation(); // not a canvas pan
+    const d = currentDevice();
+    const screens = frameEls.get(frameId)!.querySelectorAll(".screen").length || 1;
+    drag = { x: e.clientX, y: e.clientY, w: d.w, h: d.h, screens, base: d.id === "custom" ? custom!.base : d.id };
+    handle.setPointerCapture(e.pointerId);
+    viewport.classList.add("resizing");
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const axis = handle.dataset.axis!;
+    // in "both" mode the edge moves once per screen
+    const dw = axis.includes("e") ? (e.clientX - drag.x) / cam.z / drag.screens : 0;
+    const dh = axis.includes("s") ? (e.clientY - drag.y) / cam.z : 0;
+    custom = {
+      w: Math.round(clamp(drag.w + dw, 240, 3840)),
+      h: Math.round(clamp(drag.h + dh, 320, 2400)),
+      base: drag.base,
+    };
+    deviceId = "custom";
+    raf ||= requestAnimationFrame(() => {
+      raf = 0;
+      renderAll();
+      resizeScreens();
+    });
+    toast(`${custom.w} × ${custom.h}`, 900);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    viewport.classList.remove("resizing");
+    prefs.set("custom", custom);
+    saveDevice();
+    renderDevicePicker();
+  };
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+}
+
+function setChrome(on: boolean) {
+  showChrome = on;
+  prefs.set("chrome", on);
+  $("#chromeBtn").setAttribute("aria-pressed", String(on));
+  renderAll();
+}
+
 function setFullHeight(on: boolean) {
   fullHeight = on;
   prefs.set("fullHeight", on);
+  viewport.classList.toggle("full-height", on);
   $("#fullBtn").setAttribute("aria-pressed", String(on));
   resizeScreens();
 }
@@ -787,13 +904,14 @@ function renderFrame(f: FrameSummary) {
     el = buildFrameEl(f);
     frameEls.set(f.id, el);
   }
-  const width = widthOf(f);
+  const d = currentDevice();
   const working = f.status === "working" && (!f.lockExpiresAt || f.lockExpiresAt > Date.now());
   el.classList.toggle("working", working);
   el.classList.toggle("has-content", f.hasContent);
   el.classList.toggle("selected", selectedFrame === f.id);
   el.querySelector(".name")!.textContent = f.name;
-  el.querySelector(".meta")!.textContent = `${f.version ? `v${f.version}` : "new"} · ${width}px`;
+  el.querySelector(".meta")!.textContent = `${f.version ? `v${f.version}` : "new"} · ${d.id === "custom" ? d.name : `${d.name} · ${d.w}`}`;
+  el.classList.toggle("dressed", showChrome && d.radius > 0);
 
   const body = el.querySelector<HTMLElement>(".frame-body")!;
   const wanted = schemes();
@@ -808,11 +926,12 @@ function renderFrame(f: FrameSummary) {
       if (scheme === "light") body.prepend(screen);
       else body.append(screen);
     }
-    screen.style.width = `${width}px`;
-    if (!screen.style.height) screen.style.height = `${viewportHeightFor(width)}px`;
+    screen.style.width = `${d.w}px`;
+    if (!screen.style.height) screen.style.height = `${d.h}px`;
+    dressScreen(screen, d);
     screen.querySelector(".task-text")!.textContent = f.task ? `Working · ${f.task}` : "Working…";
     screen.querySelector<HTMLElement>(".scheme")!.style.display = themeMode === "both" ? "" : "none";
-    if (f.hasContent) loadInto(screen, f, scheme, width);
+    if (f.hasContent) loadInto(screen, f, scheme, d);
     else screen.querySelectorAll("iframe").forEach((n) => n.remove());
   }
 }
@@ -877,14 +996,24 @@ for (const btn of document.querySelectorAll<HTMLElement>("[data-theme-mode]")) {
     renderAll();
   });
 }
-const widthSel = $("#widthSel") as HTMLSelectElement;
-widthSel.value = String(defaultWidth);
-widthSel.addEventListener("change", () => {
-  defaultWidth = Number(widthSel.value);
-  prefs.set("width", defaultWidth);
+const deviceSel = $("#deviceSel") as HTMLSelectElement;
+function renderDevicePicker() {
+  const customOpt = custom ? `<option value="custom">Custom · ${custom.w}×${custom.h}</option>` : "";
+  deviceSel.innerHTML = customOpt + [...new Set(DEVICES.map((d) => d.group))]
+    .map((g) => `<optgroup label="${g}">${DEVICES.filter((d) => d.group === g).map((d) => `<option value="${d.id}">${escapeHtml(d.name)} · ${d.w}</option>`).join("")}</optgroup>`)
+    .join("");
+  deviceSel.value = deviceId;
+}
+renderDevicePicker();
+viewport.classList.toggle("full-height", fullHeight);
+deviceSel.addEventListener("change", () => {
+  deviceId = deviceSel.value;
+  saveDevice();
   renderAll();
   resizeScreens();
 });
+$("#chromeBtn").setAttribute("aria-pressed", String(showChrome));
+$("#chromeBtn").addEventListener("click", () => setChrome(!showChrome));
 $("#fullBtn").setAttribute("aria-pressed", String(fullHeight));
 $("#fullBtn").addEventListener("click", () => setFullHeight(!fullHeight));
 $("#fitBtn").addEventListener("click", fitAll);
@@ -979,6 +1108,10 @@ async function load() {
   tokensVersion = file.tokensVersion;
   frames.clear();
   for (const f of file.frames) frames.set(f.id, f);
+  if (!deviceChosen) {
+    deviceFromPins(file.frames);
+    deviceChosen = true; // decide once per visit, not on every reconnect
+  }
   setName(file.name);
   rememberFile(file.id, file.name);
   renderAll();
