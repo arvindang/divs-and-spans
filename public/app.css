@@ -91,6 +91,7 @@ a { color: inherit; }
   background: transparent;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
 }
 .btn:hover { background: var(--panel-2); }
 .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }

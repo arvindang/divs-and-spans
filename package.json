@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "fflate": "^0.8.3",
     "node-html-parser": "^9.0.5",
     "zod": "^4.6.7"
   },

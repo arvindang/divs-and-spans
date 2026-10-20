@@ -221,6 +221,21 @@ export class DesignFile extends DurableObject<Env> {
     return flowMap(this.meta("id")!, rows);
   }
 
+  /** Everything an export needs in one call: frames in canvas order with their html, tokens and flows. */
+  async getExport() {
+    const state = await this.getState();
+    const html = new Map(
+      this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != ''").toArray().map((r) => [r.id, r.html]),
+    );
+    return {
+      id: state.id,
+      name: state.name,
+      tokens: this.meta("tokens")!,
+      frames: state.frames.filter((f) => html.has(f.id)).map((f) => ({ ...f, html: html.get(f.id)! })),
+      flows: (await this.getFlows()).flows,
+    };
+  }
+
   private nextPosition(): number {
     const r = this.sql.exec<{ p: number | null }>("SELECT MAX(position) AS p FROM frames").toArray()[0];
     return (r?.p ?? -1) + 1;

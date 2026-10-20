@@ -349,6 +349,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
   else if (e.key === "d" || e.key === "D") setChrome(!showChrome);
   else if (e.key === "p" || e.key === "P") setFlowsAll(!flowsAll);
+  else if (e.key === "e" || e.key === "E") $("#exportBtn").click();
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
     const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
@@ -1247,6 +1248,8 @@ $("#emptyConnect").addEventListener("click", togglePop);
 ($("#mcpUrl") as HTMLInputElement).value = `${location.origin}/mcp`;
 ($("#fileUrl") as HTMLInputElement).value = `${location.origin}/f/${fileId}`;
 ($("#tokensLink") as HTMLAnchorElement).href = `/api/files/${fileId}/tokens.css`;
+($("#exportBtn") as HTMLAnchorElement).href = `/api/files/${fileId}/export.zip`;
+$("#exportBtn").addEventListener("click", () => toast("Downloading every frame as a zip"));
 $("#promptEx").textContent = `${location.origin}/f/${fileId}\nDesign the home screen for …`;
 wireCopyButtons();
 

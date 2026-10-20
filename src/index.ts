@@ -2,6 +2,7 @@ import { DesignFile } from "./design-file";
 import { handleMcp } from "./mcp";
 import { newFileId } from "./ids";
 import { renderForCanvas } from "./html";
+import { buildExport } from "./export";
 import { countryOf, track } from "./analytics";
 
 export { DesignFile };
@@ -76,6 +77,20 @@ export default {
         const { css } = await stub(m[1]).getTokens();
         return new Response(css, {
           headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-cache" },
+        });
+      }
+
+      m = path.match(/^\/api\/files\/([a-z0-9]+)\/export\.zip$/);
+      if (m) {
+        const data = await stub(m[1]).getExport();
+        const { zip, filename } = await buildExport({ origin: url.origin, ...data });
+        ctx.waitUntil(track(env, { event: "export", name: "canvas", fileId: data.id, detail: String(data.frames.length), country: countryOf(request), size: zip.byteLength }));
+        return new Response(zip, {
+          headers: {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Cache-Control": "no-store",
+          },
         });
       }
 

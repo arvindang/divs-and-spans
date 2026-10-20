@@ -3,6 +3,7 @@
 // follows an element link, and checks locks and version conflicts.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { strFromU8, unzipSync } from "fflate";
 
 const base = process.argv[2] || "http://localhost:8787";
 const client = new Client({ name: "smoke", version: "0" });
@@ -163,6 +164,13 @@ const render = await fetch(`${base}/api/files/${file_link.split("/").pop()}/fram
 const rhtml = await render.text();
 ok(render.headers.get("content-security-policy")?.includes("script-src 'none'"), "render blocks scripts via CSP");
 ok(rhtml.includes('data-theme="dark"') && rhtml.includes("tokens.css?v=2"), "render injects tokens.css and forced theme");
+
+const exp = await fetch(`${base}/api/files/${file_link.split("/").pop()}/export.zip`);
+const zip = Object.fromEntries(Object.entries(unzipSync(new Uint8Array(await exp.arrayBuffer()))).map(([k, v]) => [k.split("/").pop(), strFromU8(v)]));
+ok(exp.headers.get("content-disposition")?.includes('filename="tidal-nocturne.zip"'), "export downloads as a named zip");
+ok(["README.md", "index.html", "tokens.css", "01-00-foundations.html", "02-01-today.html", "03-02-episode.html"].every((n) => n in zip), "export has README, index, tokens and every frame in canvas order");
+ok(zip["03-02-episode.html"].includes('href="02-01-today.html"') && zip["03-02-episode.html"].includes('href="tokens.css"'), "exported frames link tokens.css and each other");
+ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README lists the flows");
 
 console.log(`\nAll good. Open ${withFlows.frames[0].link}`);
 await client.close();

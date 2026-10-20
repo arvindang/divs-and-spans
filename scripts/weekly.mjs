@@ -74,6 +74,7 @@ const HEADLINES = [
   ["New frames", "SUM(_sample_interval)", "blob1 = 'tool' AND blob2 = 'write_frame' AND blob5 = 'new'"],
   ["Element links followed", "SUM(_sample_interval)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
   ["Canvases with an element link", "count(DISTINCT index1)", "blob1 = 'tool' AND blob2 = 'get_frame' AND blob5 = 'element'"],
+  ["Exports", "SUM(_sample_interval)", "blob1 = 'export'"],
   ["MCP connects", "SUM(_sample_interval)", "blob1 = 'connect'"],
 ];
 
