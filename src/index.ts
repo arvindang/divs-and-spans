@@ -2,12 +2,14 @@ import { DesignFile } from "./design-file";
 import { handleMcp } from "./mcp";
 import { newFileId } from "./ids";
 import { renderForCanvas } from "./html";
+import { countryOf, track } from "./analytics";
 
 export { DesignFile };
 
 export interface Env {
   DESIGN_FILES: DurableObjectNamespace<DesignFile>;
   ASSETS: Fetcher;
+  EVENTS?: AnalyticsEngineDataset;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -27,7 +29,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (path === "/mcp" || path.startsWith("/mcp/")) return handleMcp(request, env);
+    if (path === "/mcp" || path.startsWith("/mcp/")) return handleMcp(request, env, ctx);
 
     // Canvas page for /f/<file> and /f/<file>/<frame>
     if (/^\/f\/[a-z0-9]+(\/[a-z0-9]+)?\/?$/.test(path)) {
@@ -41,6 +43,7 @@ export default {
         const body = (await request.json().catch(() => ({}))) as { name?: string };
         const id = newFileId();
         const state = await stub(id).init(id, (body.name || "Untitled").slice(0, 120));
+        ctx.waitUntil(track(env, { event: "create", name: "web", fileId: id, country: countryOf(request) }));
         return json({ ...state, link: `${url.origin}/f/${id}` }, 201);
       }
 
@@ -56,7 +59,11 @@ export default {
       }
 
       m = path.match(/^\/api\/files\/([a-z0-9]+)\/ws$/);
-      if (m) return stub(m[1]).fetch(request);
+      if (m) {
+        const forward = new Request(request);
+        forward.headers.set("x-ds-country", countryOf(request));
+        return stub(m[1]).fetch(forward);
+      }
 
       m = path.match(/^\/api\/files\/([a-z0-9]+)\/tokens\.css$/);
       if (m) {

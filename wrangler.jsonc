@@ -14,5 +14,6 @@
     "bindings": [{ "name": "DESIGN_FILES", "class_name": "DesignFile" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DesignFile"] }],
+  "analytics_engine_datasets": [{ "binding": "EVENTS", "dataset": "divs_and_spans_events" }],
   "observability": { "enabled": true }
 }

@@ -2,9 +2,22 @@ import { DurableObject } from "cloudflare:workers";
 import { newFrameId, newLockToken } from "./ids";
 import { flowMap, normalizeDocument, stampElementIds } from "./html";
 import type { Env } from "./index";
+import { track } from "./analytics";
 
 /** How long a start_frame claim holds before another session may take the frame. */
 const LOCK_MS = 10 * 60 * 1000;
+
+/** The canvas pings every 25s; a ping marked active (visible tab, recent input) counts as that much engaged time. */
+const PING_MS = 25 * 1000;
+
+/** Kept on each socket (survives hibernation) so the session can be reported when it closes. */
+interface ViewerSession {
+  viewer: string;
+  device: string;
+  country: string;
+  start: number;
+  activePings: number;
+}
 
 export const DEFAULT_TOKENS = `/* tokens.css — the design system for this file.
    Empty on purpose: the first frames set the direction, then the agent
@@ -72,10 +85,16 @@ type Broadcast =
  */
 export class DesignFile extends DurableObject<Env> {
   private sql: SqlStorage;
+  /** False until init() runs. Lookups of a file that doesn't exist must not write, or they'd count as stored objects. */
+  private ready: boolean;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.ready = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").toArray().length > 0;
+  }
+
+  private createSchema() {
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS frames (
@@ -93,11 +112,13 @@ export class DesignFile extends DurableObject<Env> {
         updated_at INTEGER NOT NULL
       );
     `);
+    this.ready = true;
   }
 
   // ---------- meta ----------
 
   private meta(key: string): string | null {
+    if (!this.ready) return null;
     const row = this.sql.exec<{ value: string }>("SELECT value FROM meta WHERE key = ?", key).toArray()[0];
     return row ? row.value : null;
   }
@@ -109,6 +130,7 @@ export class DesignFile extends DurableObject<Env> {
   }
 
   async init(id: string, name: string): Promise<FileState> {
+    if (!this.ready) this.createSchema();
     if (!this.meta("id")) {
       this.setMeta("id", id);
       this.setMeta("name", name);
@@ -312,19 +334,55 @@ export class DesignFile extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
+    const url = new URL(request.url);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
+    const session: ViewerSession = {
+      viewer: (url.searchParams.get("v") ?? "").replace(/[^a-z0-9]/g, "").slice(0, 32),
+      device: url.searchParams.get("d") === "touch" ? "touch" : "desktop",
+      country: request.headers.get("x-ds-country") ?? "",
+      start: Date.now(),
+      activePings: 0,
+    };
+    pair[1].serializeAttachment(session);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    if (message === "ping") ws.send("pong");
+    if (message !== "ping" && message !== "ping:active") return;
+    ws.send("pong");
+    if (message === "ping:active") {
+      const session = ws.deserializeAttachment() as ViewerSession | null;
+      if (session) ws.serializeAttachment({ ...session, activePings: session.activePings + 1 });
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number) {
+    await this.endSession(ws);
     try {
       ws.close(code, "bye");
     } catch {}
+  }
+
+  async webSocketError(ws: WebSocket) {
+    await this.endSession(ws);
+  }
+
+  /** One "session" event per canvas connection: how long it was open and how much of that was engaged. */
+  private async endSession(ws: WebSocket) {
+    const session = ws.deserializeAttachment() as ViewerSession | null;
+    if (!session?.viewer) return;
+    ws.serializeAttachment(null); // close and error can both fire; report once
+    await track(this.env, {
+      event: "session",
+      name: "canvas",
+      fileId: this.meta("id") ?? undefined,
+      actor: session.viewer,
+      detail: session.device,
+      country: session.country,
+      ms: Date.now() - session.start,
+      size: session.activePings * PING_MS,
+    });
   }
 
   private broadcast(msg: Broadcast) {

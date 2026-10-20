@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { links, newFileId, parseLink } from "./ids";
 import { lintFrame, resolveElement } from "./html";
+import { clientFromUserAgent, countryOf, track } from "./analytics";
 
 /**
  * The whole contract is structural. It says nothing about aesthetics,
@@ -27,7 +28,25 @@ const text = (value: unknown) => ({
 });
 const fail = (message: string) => ({ content: [{ type: "text" as const, text: message }], isError: true });
 
-function buildServer(env: Env, origin: string) {
+/** What a tool call reports to analytics. Handlers fill in what only they know. */
+interface ToolEvent {
+  fileId?: string;
+  detail?: string;
+  size?: number;
+  warnings?: number;
+}
+
+/** Errors grouped by cause, so the weekly report can tell conflicts from bad links. */
+const errorKind = (message: string) =>
+  /being worked on|version conflict/i.test(message) ? "conflict"
+  : /couldn't read|file link|pass a frame link/i.test(message) ? "bad_link"
+  : /not found/i.test(message) ? "not_found"
+  : "error";
+
+function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
+  const origin = new URL(request.url).origin;
+  const client = clientFromUserAgent(request.headers.get("User-Agent"));
+  const country = countryOf(request);
   const L = links(origin);
   const server = new McpServer(
     { name: "divs-and-spans", version: "0.1.0" },
@@ -41,12 +60,21 @@ function buildServer(env: Env, origin: string) {
     return p;
   };
   const wrap =
-    <A,>(fn: (args: A) => Promise<ReturnType<typeof text>>) =>
+    <A,>(tool: string, fn: (args: A, ev: ToolEvent) => Promise<ReturnType<typeof text>>) =>
     async (args: A) => {
+      const started = Date.now();
+      const link = (args as { link?: unknown }).link;
+      const ev: ToolEvent = { fileId: typeof link === "string" ? parseLink(link)?.fileId : undefined };
+      const report = (detail: string) =>
+        ctx.waitUntil(track(env, { event: "tool", name: tool, actor: client, country, ms: Date.now() - started, ...ev, detail }));
       try {
-        return await fn(args);
+        const result = await fn(args, ev);
+        report(ev.detail ?? "ok");
+        return result;
       } catch (e) {
-        return fail(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        report(errorKind(message));
+        return fail(message);
       }
     };
 
@@ -57,8 +85,9 @@ function buildServer(env: Env, origin: string) {
       description: "Create a new, empty design file and return its link. Share the link with the person so they can watch the canvas.",
       inputSchema: { name: z.string().min(1).max(120).describe("Human name for the file, e.g. 'Checkout redesign'") },
     },
-    wrap(async ({ name }: { name: string }) => {
+    wrap("create_file", async ({ name }: { name: string }, ev) => {
       const id = newFileId();
+      ev.fileId = id;
       await stubFor(id).init(id, name);
       return text({ file_link: L.file(id), name, next: "Design the first frame freely, then extract tokens.css and a foundations frame." });
     }),
@@ -73,7 +102,7 @@ function buildServer(env: Env, origin: string) {
       inputSchema: { link: z.string().describe("Any Divs & Spans link for the file") },
       annotations: { readOnlyHint: true },
     },
-    wrap(async ({ link }: { link: string }) => {
+    wrap("get_file", async ({ link }: { link: string }) => {
       const { fileId } = parse(link);
       const stub = stubFor(fileId);
       const state = await stub.getState();
@@ -115,9 +144,11 @@ function buildServer(env: Env, origin: string) {
       inputSchema: { link: z.string().describe("Frame link, optionally with #element or #element,element,…") },
       annotations: { readOnlyHint: true },
     },
-    wrap(async ({ link }: { link: string }) => {
+    wrap("get_frame", async ({ link }: { link: string }, ev) => {
       const { fileId, frameId, elementIds = [] } = parse(link);
       if (!frameId) throw new Error("That's a file link. Use get_file, or pass a frame link.");
+      // the person pointed at something on the canvas and pasted the link back: the core loop
+      if (elementIds.length) ev.detail = "element";
       const frame = await stubFor(fileId).getFrame(frameId);
       const resolve = (id: string) =>
         resolveElement(frame.html, id) ?? `Element ${id} no longer exists in this frame (it may have been removed in a later version).`;
@@ -143,8 +174,9 @@ function buildServer(env: Env, origin: string) {
         width: z.number().int().min(240).max(3840).optional().describe("Only for a screen that exists on one kind of device: its width in px (e.g. 402 phone, 820 tablet). Omit for responsive frames. The person can preview any frame at any size."),
       },
     },
-    wrap(async (a: { link: string; name?: string; task: string; width?: number }) => {
+    wrap("start_frame", async (a: { link: string; name?: string; task: string; width?: number }, ev) => {
       const { fileId, frameId } = parse(a.link);
+      ev.detail = frameId ? "edit" : "new";
       const { frame, lock } = await stubFor(fileId).startFrame({ frameId, name: a.name, task: a.task, width: a.width });
       return text({ frame_link: L.frame(fileId, frame.id), frame_id: frame.id, lock, base_version: frame.version });
     }),
@@ -165,8 +197,10 @@ function buildServer(env: Env, origin: string) {
         width: z.number().int().min(240).max(3840).optional(),
       },
     },
-    wrap(async (a: { link: string; html: string; lock?: string; name?: string; base_version?: number; width?: number }) => {
+    wrap("write_frame", async (a: { link: string; html: string; lock?: string; name?: string; base_version?: number; width?: number }, ev) => {
       const { fileId, frameId } = parse(a.link);
+      ev.detail = frameId ? "edit" : "new";
+      ev.size = a.html.length;
       const stub = stubFor(fileId);
       const result = await stub.writeFrame({
         frameId,
@@ -184,6 +218,7 @@ function buildServer(env: Env, origin: string) {
           .filter((d) => d.frame === result.frame.id)
           .map((d) => `Dead link${d.text ? ` "${d.text}"` : ""} (${d.link}): ${d.reason}. Point it at a frame id from get_file, or fix it once the target frame exists.`),
       ];
+      ev.warnings = warnings.length;
       return text({
         saved: { frame_link: L.frame(fileId, result.frame.id), name: result.frame.name, version: result.frame.version, elements: result.elementCount },
         warnings: warnings.length ? warnings : "none",
@@ -202,7 +237,7 @@ function buildServer(env: Env, origin: string) {
         css: z.string().min(1).describe("Full contents of tokens.css"),
       },
     },
-    wrap(async ({ link, css }: { link: string; css: string }) => {
+    wrap("update_tokens", async ({ link, css }: { link: string; css: string }) => {
       const { fileId } = parse(link);
       const { version } = await stubFor(fileId).updateTokens(css);
       const both = /light-dark\(|prefers-color-scheme|\[data-theme/i.test(css.replace(/\/\*[\s\S]*?\*\//g, ""));
@@ -217,7 +252,7 @@ function buildServer(env: Env, origin: string) {
       description: "Give up a claim from start_frame without writing. A new, empty frame is removed.",
       inputSchema: { link: z.string(), lock: z.string() },
     },
-    wrap(async ({ link, lock }: { link: string; lock: string }) => {
+    wrap("release_frame", async ({ link, lock }: { link: string; lock: string }) => {
       const { fileId, frameId } = parse(link);
       if (!frameId) throw new Error("Pass a frame link.");
       await stubFor(fileId).releaseFrame(frameId, lock);
@@ -233,7 +268,7 @@ function buildServer(env: Env, origin: string) {
       inputSchema: { link: z.string() },
       annotations: { destructiveHint: true },
     },
-    wrap(async ({ link }: { link: string }) => {
+    wrap("delete_frame", async ({ link }: { link: string }) => {
       const { fileId, frameId } = parse(link);
       if (!frameId) throw new Error("Pass a frame link.");
       await stubFor(fileId).deleteFrame(frameId);
@@ -245,13 +280,31 @@ function buildServer(env: Env, origin: string) {
 }
 
 /** Stateless Streamable HTTP: a fresh server + transport per request. State lives in the Durable Objects. */
-export async function handleMcp(request: Request, env: Env): Promise<Response> {
-  const origin = new URL(request.url).origin;
+export async function handleMcp(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method === "GET" || request.method === "DELETE") {
     // no server-initiated stream in stateless mode
     return new Response(null, { status: 405, headers: { Allow: "POST" } });
   }
-  const server = buildServer(env, origin);
+  // clientInfo only arrives on initialize, so that's where we learn which client connected
+  ctx.waitUntil(
+    request
+      .clone()
+      .json()
+      .then((body: any) => {
+        const init = (Array.isArray(body) ? body : [body]).find((m) => m?.method === "initialize");
+        if (!init) return;
+        const info = init.params?.clientInfo ?? {};
+        return track(env, {
+          event: "connect",
+          name: String(info.name ?? "unknown").slice(0, 64),
+          actor: clientFromUserAgent(request.headers.get("User-Agent")),
+          detail: String(info.version ?? "").slice(0, 32),
+          country: countryOf(request),
+        });
+      })
+      .catch(() => {}),
+  );
+  const server = buildServer(env, request, ctx);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

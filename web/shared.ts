@@ -45,6 +45,19 @@ export const prefs = {
   },
 };
 
+/**
+ * Anonymous, random id for counting weekly viewers. Nothing personal goes into it.
+ * If storage is blocked it changes per page load, which only overcounts.
+ */
+export function viewerId(): string {
+  let id = prefs.get<string>("viewer", "");
+  if (!/^[a-z0-9]{16}$/.test(id)) {
+    id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+    prefs.set("viewer", id);
+  }
+  return id;
+}
+
 export interface Recent {
   id: string;
   name: string;

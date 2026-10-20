@@ -1,4 +1,4 @@
-import { $, copy, escapeHtml, prefs, rememberFile, toast, wireCopyButtons } from "./shared";
+import { $, copy, escapeHtml, prefs, rememberFile, toast, viewerId, wireCopyButtons } from "./shared";
 import { linksIn, resolveLink } from "../src/flows";
 import { DEFAULT_BY_KIND, DEVICES, customDevice, deviceById, deviceForLegacyWidth, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
 
@@ -542,6 +542,7 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   doc.addEventListener("pointerdown", () => {
     if (selectedFrame !== frameId) select(frameId);
   });
+  watchActivity(doc);
 
   const pickable = (t: EventTarget | null, parent: boolean) => {
     let el = (t as Element | null)?.closest?.("[data-ds]") ?? null;
@@ -1239,9 +1240,10 @@ wireCopyButtons();
 // ---------- live sync ----------
 let ws: WebSocket | null = null;
 let retry = 0;
+const device = matchMedia("(pointer: coarse)").matches ? "touch" : "desktop";
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/api/files/${fileId}/ws`);
+  ws = new WebSocket(`${proto}://${location.host}/api/files/${fileId}/ws?v=${viewerId()}&d=${device}`);
   ws.addEventListener("open", () => {
     retry = 0;
     setLive(true);
@@ -1268,7 +1270,18 @@ function connect() {
     setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
   });
 }
-setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send("ping"), 25000);
+// pings double as engaged-time samples: active means the tab is visible and someone touched the canvas lately
+const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
+let lastInput = Date.now();
+function watchActivity(target: Document | Window) {
+  for (const type of ["pointerdown", "keydown", "wheel"]) target.addEventListener(type, () => (lastInput = Date.now()), { capture: true, passive: true });
+}
+watchActivity(window);
+setInterval(() => {
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  const active = document.visibilityState === "visible" && Date.now() - lastInput < ACTIVE_WINDOW_MS;
+  ws.send(active ? "ping:active" : "ping");
+}, 25000);
 // claims expire server-side; re-render so an abandoned frame stops shimmering
 setInterval(() => {
   const now = Date.now();

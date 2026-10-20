@@ -48,6 +48,14 @@ Canvas (web/) ──► /api/files/:id/...  ──►  DesignFile Durable Object
 - **Lint is consistency, not taste.** `write_frame` warns about colors and fonts that aren't in tokens.css, a single color scheme, or frames that use no tokens. It never comments on layout or style.
 - **Frames are static.** Frames are agent-written HTML on our origin, so the render route sends `script-src 'none'`, which is what keeps them script-free. The canvas iframes are `sandbox="allow-same-origin allow-scripts"` only because Safari won't fire the canvas's own listeners in a script-less sandbox. The canvas reads the frame DOM for picking and sizing.
 
+## Analytics
+
+Events go to Workers Analytics Engine (dataset `divs_and_spans_events`, layout in `src/analytics.ts`): every MCP tool call (outcome, latency, bytes, lint warnings), MCP client connects, files created, and one event per canvas connection with an anonymous random viewer id, time open and engaged time (visible tab, input in the last 2 minutes). File ids are hashed before they're written, and frame HTML is never recorded.
+
+```sh
+CF_ACCOUNT_ID=… CF_API_TOKEN=… npm run weekly   # token needs Account Analytics: Read + Workers Scripts: Read
+```
+
 ## MCP tools
 
 | tool | what it does |
