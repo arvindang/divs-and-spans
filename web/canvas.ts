@@ -65,7 +65,7 @@ function zoomAt(clientX: number, clientY: number, nextZ: number) {
 /** Fit a world-space rect into the viewport. */
 function fitRect(r: { x: number; y: number; w: number; h: number }, maxZ = 1) {
   const padX = Math.min(80, viewport.clientWidth * 0.05);
-  const padTop = viewport.clientWidth < 720 ? 130 : 110;
+  const padTop = 110;
   const padBottom = 60;
   const vw = viewport.clientWidth - padX * 2;
   const vh = viewport.clientHeight - padTop - padBottom;
