@@ -8,6 +8,7 @@ interface FrameSummary {
   task: string | null;
   version: number;
   position: number;
+  foundations: boolean;
   width: number | null;
   hasContent: boolean;
   lockExpiresAt: number | null;
@@ -497,7 +498,9 @@ function placeInOrder(parent: HTMLElement, wanted: HTMLElement[]) {
 }
 
 function renderAll() {
-  const ordered = [...frames.values()].sort((a, b) => a.position - b.position);
+  const ordered = [...frames.values()].sort(
+    (a, b) => Number(b.foundations) - Number(a.foundations) || a.position - b.position,
+  );
   for (const f of ordered) renderFrame(f);
   for (const [id, el] of frameEls) {
     if (!frames.has(id)) {

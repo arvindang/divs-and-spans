@@ -17,6 +17,9 @@ export const DEFAULT_TOKENS = `/* tokens.css — the design system for this file
 
 export type FrameStatus = "working" | "ready";
 
+/** The styleguide frame. It documents the system, so it always sits first on the canvas. */
+export const isFoundationsName = (name: string) => /foundation|style ?guide|design system|tokens/i.test(name);
+
 export interface FrameSummary {
   id: string;
   name: string;
@@ -24,6 +27,7 @@ export interface FrameSummary {
   task: string | null;
   version: number;
   position: number;
+  foundations: boolean;
   width: number | null;
   hasContent: boolean;
   lockExpiresAt: number | null;
@@ -129,7 +133,8 @@ export class DesignFile extends DurableObject<Env> {
       frames: this.sql
         .exec<FrameRow>("SELECT * FROM frames ORDER BY position ASC")
         .toArray()
-        .map((r) => this.summarize(r)),
+        .map((r) => this.summarize(r))
+        .sort((a, b) => Number(b.foundations) - Number(a.foundations)),
     };
   }
 
@@ -174,6 +179,7 @@ export class DesignFile extends DurableObject<Env> {
       task: lockLive ? r.task : null,
       version: r.version,
       position: r.position,
+      foundations: isFoundationsName(r.name),
       width: r.width,
       hasContent: r.html.length > 0,
       lockExpiresAt: lockLive ? r.lock_expires : null,

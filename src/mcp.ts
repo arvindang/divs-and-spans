@@ -76,7 +76,7 @@ function buildServer(env: Env, origin: string) {
       const stub = stubFor(fileId);
       const state = await stub.getState();
       const tokens = await stub.getTokens();
-      const foundations = state.frames.find((f) => /foundation|style ?guide|design system|tokens/i.test(f.name));
+      const foundations = state.frames.find((f) => f.foundations);
       let foundationsHtml: string | null = null;
       if (foundations?.hasContent) {
         const f = await stub.getFrame(foundations.id);
