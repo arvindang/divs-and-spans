@@ -10,6 +10,7 @@
   --muted: light-dark(#76767a, #9a9aa0);
   --accent: light-dark(#4f46e5, #8b85ff);
   --accent-soft: light-dark(#4f46e51a, #8b85ff26);
+  --danger: light-dark(#d93d42, #ff6b6b);
   --shadow: 0 1px 2px #0000000f, 0 8px 24px #0000001a;
   --radius: 8px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -126,6 +127,24 @@ select.btn { appearance: none; padding-right: 10px; }
   gap: 120px;
   padding: 0;
 }
+
+/* ---------- flows ---------- */
+.flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.flows .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.flows .hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.flows .src { fill: var(--accent); }
+.flows .src.off { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; }
+.flows .box { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.flows marker path { fill: var(--accent); stroke: var(--accent); stroke-width: 1; stroke-linejoin: round; }
+.flows .rest { opacity: 0.6; }
+.flows .dim { opacity: 0.3; }
+.flows .faint { opacity: 0.12; }
+.flows .flow:hover { opacity: 1; }
+.flows .flow:hover .line { stroke-width: 3; }
+.flows .dead .line { stroke: var(--danger); stroke-dasharray: 4 4; }
+.flows .dead .src, .flows .dead .end { fill: var(--danger); stroke: none; }
+.flows .dead .x { stroke: var(--panel); stroke-width: 1.75; stroke-linecap: round; }
+.viewport.panning .flows .hit, .viewport.space .flows .hit { pointer-events: none; }
 
 /* ---------- frames ---------- */
 .frame { position: relative; flex: none; }

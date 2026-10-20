@@ -142,6 +142,16 @@ ok(f2.warnings === "none", "foundations frame is fully on-system");
 const final = await call("get_file", { link: file_link });
 ok(final.frames.length === 2 && final.foundations.html?.includes("Tidal Nocturne"), "get_file returns the styleguide frame");
 
+// 5b. flows: links between frames come back as a map; dead ones are flagged
+const episode = `<main><a href="#${claim.frame_id}">Back to today</a><button data-to="${claim.frame_id}/${btnId}">Replay</button>
+  <a href="#notes">Notes</a><section id="notes"></section><a href="#nowhere">Broken</a><a href="https://example.com">Out</a></main>`;
+const f3 = await call("write_frame", { link: file_link, name: "02 Episode", html: episode });
+ok(f3.warnings.some((w) => w.startsWith('Dead link "Broken"')), "write_frame flags a dead #link");
+const withFlows = await call("get_file", { link: file_link });
+const fromEpisode = withFlows.flows.filter((f) => f.to === claim.frame_id);
+ok(fromEpisode.length === 2 && fromEpisode.some((f) => f.to_element === btnId && f.text === "Replay"), "get_file returns both flows, one landing on an element");
+ok(withFlows.dead_links?.length === 1 && withFlows.dead_links[0].link === "#nowhere", "in-page anchors and external links aren't flows");
+
 // 6. a second session can't steal a claimed frame
 const c2 = await call("start_frame", { link: claim.frame_link, task: "Tightening the hero" });
 await call("start_frame", { link: claim.frame_link, task: "Other session" }, true);
@@ -153,5 +163,5 @@ const rhtml = await render.text();
 ok(render.headers.get("content-security-policy")?.includes("script-src 'none'"), "render blocks scripts via CSP");
 ok(rhtml.includes('data-theme="dark"') && rhtml.includes("tokens.css?v=2"), "render injects tokens.css and forced theme");
 
-console.log(`\nAll good. Open ${final.frames[0].link}`);
+console.log(`\nAll good. Open ${withFlows.frames[0].link}`);
 await client.close();

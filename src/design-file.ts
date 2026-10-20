@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { newFrameId, newLockToken } from "./ids";
-import { normalizeDocument, stampElementIds } from "./html";
+import { flowMap, normalizeDocument, stampElementIds } from "./html";
 import type { Env } from "./index";
 
 /** How long a start_frame claim holds before another session may take the frame. */
@@ -191,6 +191,12 @@ export class DesignFile extends DurableObject<Env> {
     this.requireFile();
     const r = this.row(frameId);
     return { ...this.summarize(r), html: r.html };
+  }
+
+  async getFlows() {
+    this.requireFile();
+    const rows = this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != ''").toArray();
+    return flowMap(this.meta("id")!, rows);
   }
 
   private nextPosition(): number {

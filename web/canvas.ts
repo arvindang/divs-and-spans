@@ -1,4 +1,5 @@
 import { $, copy, escapeHtml, prefs, rememberFile, toast, wireCopyButtons } from "./shared";
+import { linksIn, resolveLink } from "../src/flows";
 
 // ---------- types (mirror src/design-file.ts) ----------
 interface FrameSummary {
@@ -39,6 +40,7 @@ let themeMode = prefs.get<ThemeMode>("theme", systemScheme);
 let defaultWidth = prefs.get<number>("width", 1440);
 let fullHeight = prefs.get<boolean>("fullHeight", false);
 let picking = false;
+let flowsAll = prefs.get<boolean>("flowsAll", false);
 let selectedFrame: string | null = initialFrameId || null;
 type Target = { frameId: string; elementId: string };
 /** Selected elements; the last one is the "current" one (URL hash, focus). */
@@ -63,6 +65,7 @@ function applyCamera() {
   viewport.style.setProperty("--by", `${cam.y}px`);
   $("#zoomLabel").textContent = `${Math.round(cam.z * 100)}%`;
   viewport.classList.toggle("tiny", cam.z < 0.3);
+  scheduleFlows();
 }
 function zoomAt(clientX: number, clientY: number, nextZ: number) {
   const z = Math.min(4, Math.max(0.05, nextZ));
@@ -206,9 +209,13 @@ function onKey(e: KeyboardEvent, down: boolean) {
   if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if ((e.key === "c" || e.key === "C") && (targets.length || selectedFrame)) copySelection();
   else if (e.key === "Escape") {
-    if (targets.length) setTargets([], false);
-    else if (picking) setPicking(false);
-    else select(null);
+    if (focusedEdge) focusEdge(null);
+    else if (targets.length) setTargets([], false);
+    else if (picking || flowsAll) {
+      // one press turns every tool off
+      if (picking) setPicking(false);
+      if (flowsAll) setFlowsAll(false);
+    } else select(null);
     $("#connectPop").hidden = true;
   } else if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) fitAll();
   else if (e.key === ")" || (e.shiftKey && e.code === "Digit0")) zoomAt(innerWidth / 2, innerHeight / 2, 1);
@@ -216,6 +223,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, cam.z / 1.25);
   else if (e.key === "f" && selectedFrame) focusFrame(selectedFrame);
   else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
+  else if (e.key === "p" || e.key === "P") setFlowsAll(!flowsAll);
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
     const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
@@ -247,9 +255,11 @@ function selectAndReveal(id: string) {
 }
 function select(id: string | null) {
   selectedFrame = id;
+  focusedEdge = null;
   for (const [fid, el] of frameEls) el.classList.toggle("selected", fid === id);
   const path = id ? `/f/${fileId}/${id}` : `/f/${fileId}`;
   if (location.pathname !== path) history.replaceState(null, "", path + (id && hashFor(id) ? `#${hashFor(id)}` : ""));
+  scheduleFlows();
 }
 
 function setPicking(on: boolean) {
@@ -357,6 +367,8 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   }
   doc.addEventListener("keydown", (e) => onKey(e, true));
   doc.addEventListener("keyup", (e) => onKey(e, false));
+  // inner panes scroll too, so listen in the capture phase
+  doc.addEventListener("scroll", scheduleFlows, { capture: true, passive: true });
   doc.addEventListener("pointerdown", () => {
     if (selectedFrame !== frameId) select(frameId);
   });
@@ -378,7 +390,10 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   doc.addEventListener("mousedown", (e) => picking && e.preventDefault(), true);
   doc.addEventListener("click", (e) => {
     e.preventDefault(); // designs are static: links and buttons never navigate
-    if (!picking) return;
+    if (!picking) {
+      if (e.altKey) followLinkAt(doc, frameId, e.target as Element);
+      return;
+    }
     const el = pickable(e.target, e.altKey);
     if (!el) return;
     const t = { frameId, elementId: el.getAttribute("data-ds")! };
@@ -403,6 +418,7 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   doc.addEventListener("submit", (e) => e.preventDefault(), true);
 
   markTargets(doc, frameId);
+  scheduleFlows();
 }
 
 /** Outline this frame's selected elements; returns the current (last) one if it's here. */
@@ -420,7 +436,9 @@ function markTargets(doc: Document, frameId: string) {
 
 function setTargets(ts: Target[], focus: boolean) {
   targets = ts;
+  focusedEdge = null;
   renderPickBar();
+  scheduleFlows();
   const t = ts.at(-1);
   if (t) select(t.frameId);
   history.replaceState(null, "", `/f/${fileId}${t ? `/${t.frameId}#${hashFor(t.frameId)}` : selectedFrame ? `/${selectedFrame}` : ""}`);
@@ -440,6 +458,208 @@ function setTargets(ts: Target[], focus: boolean) {
     fitRect({ x: fr.x + er.left - pad, y: fr.y + er.top - pad, w: er.width + pad * 2, h: er.height + pad * 2 }, 1.25);
   }
 }
+
+// ---------- flows ----------
+/**
+ * Links between frames, drawn over the canvas in screen space so lines stay
+ * crisp at any zoom. A selected element shows its links; P shows all.
+ */
+type Edge = {
+  from: string;
+  iframe: HTMLIFrameElement;
+  el: Element;
+  text: string;
+  value: string;
+  /** Missing when the link leads nowhere. */
+  to?: string;
+  toElement?: string;
+};
+type Box = { x: number; y: number; w: number; h: number; clip: DOMRect };
+
+const flowEdges = $("#flowEdges") as unknown as SVGGElement;
+const linkCache = new WeakMap<Document, ReturnType<typeof linksIn<Element>>>();
+let drawnEdges: Edge[] = [];
+let flowRaf = 0;
+function scheduleFlows() {
+  flowRaf ||= requestAnimationFrame(drawFlows);
+}
+
+const linksOf = (doc: Document) => {
+  let found = linkCache.get(doc);
+  if (!found) linkCache.set(doc, (found = linksIn<Element>(doc, fileId)));
+  return found;
+};
+/** Flows start from and land on a frame's first screen (light, in "both" mode). */
+const primaryIframe = (id: string) =>
+  frameEls.get(id)?.querySelector<HTMLIFrameElement>(".screen iframe:not([data-loading])") ?? null;
+const resolve = (doc: Document, from: string, l: ReturnType<typeof linksOf>["links"][number]) =>
+  resolveLink(l.ref, from, (id) => frames.has(id), linksOf(doc).anchors);
+
+function collectEdges(): Edge[] {
+  const edges: Edge[] = [];
+  for (const from of frameOrder) {
+    const iframe = primaryIframe(from);
+    const doc = iframe?.contentDocument;
+    if (!iframe || !doc?.body) continue;
+    for (const l of linksOf(doc).links) {
+      const r = resolve(doc, from, l);
+      if (r) edges.push({ from, iframe, el: l.el, text: l.text, value: l.value, ...(r.kind === "edge" ? { to: r.to, toElement: r.toElement } : {}) });
+    }
+  }
+  return edges;
+}
+
+/**
+ * Selected elements always show their own links. Everything else needs P:
+ * then the selected frame's links stand out, and the rest fade further the
+ * narrower the selection is.
+ */
+type FlowState = "faint" | "dim" | "rest" | "on";
+const FLOW_ORDER: FlowState[] = ["faint", "dim", "rest", "on"];
+function edgeState(e: Edge): FlowState | null {
+  if (focusedEdge) return edgeKey(e) === focusedEdge ? "on" : flowsAll ? "faint" : null;
+  if (targets.length) {
+    const on = targets.some((t) => {
+      // the link itself, something inside it, or a container around it
+      const sel = t.frameId === e.from ? e.el.ownerDocument.querySelector(`[data-ds="${CSS.escape(t.elementId)}"]`) : null;
+      if (sel && (sel.contains(e.el) || e.el.contains(sel))) return true;
+      return t.frameId === e.to && t.elementId === e.toElement;
+    });
+    return on ? "on" : flowsAll ? "faint" : null;
+  }
+  if (!flowsAll) return null;
+  if (selectedFrame) return e.from === selectedFrame || e.to === selectedFrame ? "on" : "dim";
+  return "rest";
+}
+
+/** An element's box on screen, and the visible part of its iframe. */
+function boxOf(iframe: HTMLIFrameElement, el: Element): Box | null {
+  const r = el.getBoundingClientRect();
+  if (!r.width && !r.height) return null; // display: none
+  const clip = iframe.getBoundingClientRect();
+  const k = clip.width / iframe.clientWidth;
+  return { x: clip.left + r.left * k, y: clip.top + r.top * k, w: r.width * k, h: r.height * k, clip };
+}
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+/** Where a line meets a box: its side facing the other end, its middle kept inside the visible frame. */
+const sideOf = (b: Box, dir: 1 | -1) => ({
+  x: dir > 0 ? Math.min(b.x + b.w, b.clip.right) : Math.max(b.x, b.clip.left),
+  y: clamp(b.y + b.h / 2, b.clip.top + 6, b.clip.bottom - 6),
+});
+const n = (v: number) => v.toFixed(1);
+
+function drawFlows() {
+  flowRaf = 0;
+  const bodies = new Map([...frameEls].map(([id, el]) => [id, el.querySelector(".frame-body")!.getBoundingClientRect()]));
+  const labelTop = (id: string) => frameEls.get(id)!.querySelector(".frame-label")!.getBoundingClientRect().top;
+  const shown = collectEdges()
+    .map((e) => ({ e, state: edgeState(e) }))
+    .filter((x): x is { e: Edge; state: FlowState } => !!x.state)
+    .sort((a, b) => FLOW_ORDER.indexOf(a.state) - FLOW_ORDER.indexOf(b.state));
+  const boxed = new Set<Element>();
+  const selected = new Set(targets.map((t) => `${t.frameId}/${t.elementId}`));
+  const parts: string[] = [];
+  drawnEdges = [];
+
+  for (const { e, state } of shown) {
+    const src = boxOf(e.iframe, e.el);
+    if (!src) continue;
+    const i = drawnEdges.push(e) - 1;
+    const offscreen = src.y + src.h < src.clip.top || src.y > src.clip.bottom;
+    const fromName = frames.get(e.from)?.name ?? e.from;
+    const what = e.text ? `“${e.text}”` : "Link";
+
+    // dashed box around the link when the selection doesn't already outline it
+    let box = "";
+    if (state === "on" && !offscreen && !boxed.has(e.el) && !selected.has(`${e.from}/${e.el.getAttribute("data-ds")}`)) {
+      boxed.add(e.el);
+      const top = Math.max(src.y, src.clip.top);
+      const bottom = Math.min(src.y + src.h, src.clip.bottom);
+      box = `<rect class="box" x="${n(src.x - 2)}" y="${n(top - 2)}" width="${n(src.w + 4)}" height="${n(bottom - top + 4)}" rx="4"/>`;
+    }
+
+    if (!e.to) {
+      const s = sideOf(src, 1);
+      const d = `M${n(s.x)} ${n(s.y)}h30`;
+      const ex = s.x + 37;
+      const title = `${what} in ${fromName} links to ${e.value}, which isn't a frame in this file. Click to select it, then C copies its link for the agent.`;
+      parts.push(`<g class="flow ${state} dead" data-edge="${i}"><title>${escapeHtml(title)}</title>${box}<path class="hit" d="${d}"/><path class="line" d="${d}"/>` +
+        `<circle class="src" cx="${n(s.x)}" cy="${n(s.y)}" r="3.5"/><circle class="end" cx="${n(ex)}" cy="${n(s.y)}" r="7"/>` +
+        `<path class="x" d="M${n(ex - 3)} ${n(s.y - 3)}l6 6m0 -6l-6 6"/></g>`);
+      continue;
+    }
+
+    const body = bodies.get(e.to);
+    if (!body) continue;
+    const tIframe = primaryIframe(e.to);
+    const tEl = e.toElement ? tIframe?.contentDocument?.querySelector(`[data-ds="${CSS.escape(e.toElement)}"]`) : null;
+    const tgt = tIframe && tEl ? boxOf(tIframe, tEl) : null;
+    const dir: 1 | -1 = (tgt ? tgt.x + tgt.w / 2 : body.left + body.width / 2) >= src.x + src.w / 2 ? 1 : -1;
+    const s = sideOf(src, dir);
+    const t = tgt
+      ? sideOf(tgt, dir > 0 ? -1 : 1)
+      : { x: dir > 0 ? body.left : body.right, y: body.top + Math.min(body.height / 2, 48 * cam.z) };
+    // arc over any frames sitting between the two ends instead of cutting across them
+    const lo = Math.min(s.x, t.x);
+    const hi = Math.max(s.x, t.x);
+    const tops = [...bodies].filter(([id, b]) => id !== e.from && id !== e.to && b.left > lo && b.right < hi).map(([id]) => labelTop(id));
+    // longer handles when the ends are far apart vertically, so the line arrives level with its arrow
+    const h = Math.max(40, (hi - lo) * 0.35, Math.min(Math.abs(t.y - s.y) * 0.5, 160));
+    let c1 = s.y;
+    let c2 = t.y;
+    if (tops.length) c1 = c2 = Math.min(s.y, t.y, (Math.min(...tops) - 40 - (s.y + t.y) / 8) / 0.75);
+    const d = `M${n(s.x)} ${n(s.y)}C${n(s.x + dir * h)} ${n(c1)} ${n(t.x - dir * h)} ${n(c2)} ${n(t.x)} ${n(t.y)}`;
+    const title = `${what} in ${fromName} → ${frames.get(e.to)?.name ?? e.to}${tgt ? " (one element)" : ""}${offscreen ? " · scrolled out of view" : ""}. ${edgeKey(e) === focusedEdge ? "Click again to go there" : "Click to focus this link"}.`;
+    parts.push(`<g class="flow ${state}" data-edge="${i}"><title>${escapeHtml(title)}</title>${box}<path class="hit" d="${d}"/>` +
+      `<path class="line" d="${d}" marker-end="url(#flowArrow)"/><circle class="src${offscreen ? " off" : ""}" cx="${n(s.x)}" cy="${n(s.y)}" r="3.5"/></g>`);
+  }
+  flowEdges.innerHTML = parts.join("");
+}
+
+/** Go where a link leads: its frame, or the exact element when it names one. */
+function follow(to: string, element?: string) {
+  if (element) return setTargets([{ frameId: to, elementId: element }], true);
+  if (targets.length) setTargets([], false);
+  selectAndReveal(to);
+}
+function followLinkAt(doc: Document, frameId: string, target: Element) {
+  const l = linksOf(doc).links.find((x) => x.el.contains(target));
+  if (!l) return;
+  const r = resolve(doc, frameId, l);
+  if (r?.kind === "edge") follow(r.to, r.toElement);
+  else if (r) toast(`That link (${escapeHtml(l.value)}) doesn't lead to a frame`);
+}
+
+/** A clicked line: shown on its own, everything else faded or hidden, until Esc or another selection. */
+let focusedEdge: string | null = null;
+const edgeKey = (e: Edge) => `${e.from}/${e.el.getAttribute("data-ds")}>${e.to ?? ""}/${e.toElement ?? ""}`;
+function focusEdge(key: string | null) {
+  focusedEdge = key;
+  scheduleFlows();
+}
+
+$("#flows").addEventListener("click", (ev) => {
+  const g = (ev.target as Element).closest<SVGGElement>("[data-edge]");
+  const e = g && drawnEdges[Number(g.dataset.edge)];
+  if (!e) return;
+  if (!e.to) return setTargets([{ frameId: e.from, elementId: e.el.getAttribute("data-ds")! }], true);
+  // first click focuses the line, a second one goes where it leads
+  if (edgeKey(e) === focusedEdge) follow(e.to, e.toElement);
+  else focusEdge(edgeKey(e));
+});
+
+function setFlowsAll(on: boolean) {
+  flowsAll = on;
+  prefs.set("flowsAll", on);
+  $("#flowsBtn").setAttribute("aria-pressed", String(on));
+  scheduleFlows();
+  if (on && frames.size > 1 && !collectEdges().some((e) => e.to)) {
+    toast("No links between frames yet. Ask the agent to link screens with <code>href=\"#&lt;frame id&gt;\"</code>", 4000);
+  }
+}
+$("#flowsBtn").setAttribute("aria-pressed", String(flowsAll));
+$("#flowsBtn").addEventListener("click", () => setFlowsAll(!flowsAll));
+addEventListener("resize", scheduleFlows);
 
 // ---------- rendering ----------
 function frameSrc(f: FrameSummary, scheme: Scheme) {
@@ -538,6 +758,7 @@ function resizeScreens() {
     }
     syncPairHeights(id);
   }
+  scheduleFlows();
 }
 
 function setFullHeight(on: boolean) {
@@ -632,6 +853,7 @@ function renderAll() {
     btn.setAttribute("aria-pressed", String(btn.dataset.themeMode === themeMode));
   }
   maybeInitialFocus();
+  scheduleFlows();
 }
 
 function maybeInitialFocus() {

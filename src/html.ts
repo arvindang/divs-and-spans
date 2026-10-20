@@ -1,5 +1,6 @@
 import { parse } from "node-html-parser";
 import { newElementId } from "./ids";
+import { linksIn, resolveLink } from "./flows";
 
 /** Make sure a frame is a full HTML document. Fragments get a minimal shell. */
 export function normalizeDocument(html: string): string {
@@ -125,7 +126,45 @@ export function resolveElement(html: string, elementId: string, maxLength = 1200
   };
 }
 
-const COLOR_RE = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\([^)]*\)/gi;
+export interface Flow {
+  from: string;
+  element: string;
+  text: string;
+  to: string;
+  to_element?: string;
+}
+export interface DeadLink {
+  frame: string;
+  element: string;
+  text: string;
+  link: string;
+  reason: string;
+}
+
+/** The file's flow map: which element in which frame leads where, and links that lead nowhere. */
+export function flowMap(fileId: string, frames: { id: string; html: string }[]) {
+  const roots = new Map(frames.map((f) => [f.id, parse(f.html, { comment: false })]));
+  const flows: Flow[] = [];
+  const dead: DeadLink[] = [];
+  for (const [from, root] of roots) {
+    const { links, anchors } = linksIn(root, fileId);
+    for (const l of links) {
+      const r = resolveLink(l.ref, from, (id) => roots.has(id), anchors);
+      if (!r) continue;
+      const base = { element: l.element, text: l.text };
+      if (r.kind === "dead") {
+        dead.push({ frame: from, ...base, link: l.value, reason: `${l.ref.frame} isn't a frame in this file${l.ref.bare ? " or an id in this frame" : ""}` });
+      } else if (r.toElement && !roots.get(r.to)!.querySelector(`[data-ds="${r.toElement}"]`)) {
+        dead.push({ frame: from, ...base, link: l.value, reason: `element ${r.toElement} isn't in frame ${r.to}` });
+      } else {
+        flows.push({ from, ...base, to: r.to, ...(r.toElement ? { to_element: r.toElement } : {}) });
+      }
+    }
+  }
+  return { flows, dead };
+}
+
+const COLOR_RE =/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\([^)]*\)/gi;
 const GENERIC_FONTS = new Set([
   "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif",
   "ui-monospace", "ui-rounded", "emoji", "math", "fangsong", "inherit", "initial", "unset", "revert",

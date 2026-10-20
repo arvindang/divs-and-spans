@@ -17,6 +17,7 @@ The contract (structural only, the design itself is yours):
 3. tokens.css defines both color schemes. Prefer \`color-scheme: light dark\` on :root with light-dark(<light>, <dark>) values; the canvas can force either scheme with [data-theme="light"|"dark"] on <html>.
 4. On a new file, design the first frame freely, then extract what you used into tokens.css (update_tokens) and write a foundations/styleguide frame that documents palette, type, voice and rules. Later frames follow it.
 5. Every element gets a stable data-ds id when saved. Keep existing data-ds attributes when you rewrite a frame so the person's links keep working.
+6. Link screens with real links: href="#<frame_id>" on an <a>, or data-to="<frame_id>" on anything else (e.g. a <button>). Add /<element_id> to land on one element in that frame. The canvas draws these as the flow between frames, and get_file returns them as \`flows\`.
 
 Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.`;
 
@@ -76,6 +77,7 @@ function buildServer(env: Env, origin: string) {
       const stub = stubFor(fileId);
       const state = await stub.getState();
       const tokens = await stub.getTokens();
+      const { flows, dead } = await stub.getFlows();
       const foundations = state.frames.find((f) => f.foundations);
       let foundationsHtml: string | null = null;
       if (foundations?.hasContent) {
@@ -97,6 +99,8 @@ function buildServer(env: Env, origin: string) {
         foundations: foundations
           ? { frame: foundations.name, link: L.frame(fileId, foundations.id), html: foundationsHtml }
           : "No foundations/styleguide frame yet. After the first frame, extract tokens.css and write one.",
+        flows: flows.length ? flows : "No links between frames yet. See contract rule 6.",
+        ...(dead.length ? { dead_links: dead } : {}),
       });
     }),
   );
@@ -172,7 +176,13 @@ function buildServer(env: Env, origin: string) {
         width: a.width,
       });
       const tokens = await stub.getTokens();
-      const warnings = lintFrame(result.html, tokens.css);
+      const { dead } = await stub.getFlows();
+      const warnings = [
+        ...lintFrame(result.html, tokens.css),
+        ...dead
+          .filter((d) => d.frame === result.frame.id)
+          .map((d) => `Dead link${d.text ? ` "${d.text}"` : ""} (${d.link}): ${d.reason}. Point it at a frame id from get_file, or fix it once the target frame exists.`),
+      ];
       return text({
         saved: { frame_link: L.frame(fileId, result.frame.id), name: result.frame.name, version: result.frame.version, elements: result.elementCount },
         warnings: warnings.length ? warnings : "none",

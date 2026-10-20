@@ -10,6 +10,14 @@
 <body>
 <div class="viewport" id="viewport">
   <div class="world" id="world"></div>
+  <svg class="flows" id="flows" aria-hidden="true">
+    <defs>
+      <marker id="flowArrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M1 1.5L11 6L1 10.5L3.5 6z"/>
+      </marker>
+    </defs>
+    <g id="flowEdges"></g>
+  </svg>
 </div>
 
 <header class="bar">
@@ -22,6 +30,7 @@
   <div class="spacer"></div>
   <div class="group">
     <button class="btn" id="pickBtn" aria-pressed="false" title="Select an element to copy its link · Shift-click to select more (L)">Select<span class="hide-lg">element</span> <kbd>L</kbd></button>
+    <button class="btn" id="flowsBtn" aria-pressed="false" title="Show every link between frames (P) · A selected element always shows its own links · Alt-click a link in a frame to follow it">Flows <kbd>P</kbd></button>
     <div class="sep hide-sm"></div>
     <button class="btn hide-sm" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
     <button class="btn hide-sm" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
