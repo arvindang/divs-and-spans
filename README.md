@@ -4,7 +4,7 @@ Visual markdown for UI. An LLM writes HTML and CSS over MCP, the canvas renders 
 
 No design tooling on purpose. No layers, shapes, or pen. The canvas renders and links; the model designs.
 
-Live: https://divs-and-spans.arvindang.workers.dev · MCP at `/mcp`
+Live: https://divsandspans.com · MCP at `https://divsandspans.com/mcp` (the original `divs-and-spans.arvindang.workers.dev` still works; `www` redirects to the apex)
 
 ## Run it
 

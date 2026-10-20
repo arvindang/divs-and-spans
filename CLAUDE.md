@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Divs & Spans is a design canvas that LLMs draw on over MCP: the agent writes HTML/CSS frames, the canvas renders them live, and people point back at files, frames or single elements with links. No design tooling (layers, shapes, pen) on purpose. One Cloudflare Worker serves the MCP endpoint, the JSON/WebSocket API and the canvas. Live at https://divs-and-spans.arvindang.workers.dev. README.md has the full feature and keyboard reference.
+Divs & Spans is a design canvas that LLMs draw on over MCP: the agent writes HTML/CSS frames, the canvas renders them live, and people point back at files, frames or single elements with links. No design tooling (layers, shapes, pen) on purpose. One Cloudflare Worker serves the MCP endpoint, the JSON/WebSocket API and the canvas. Live at https://divsandspans.com (custom domains in wrangler.jsonc; workers.dev is kept on so older links and connectors keep working, and `www` 308-redirects to the apex in src/index.ts). Links are built from the request origin, so they follow whichever host the client used. README.md has the full feature and keyboard reference.
 
 ## Commands
 

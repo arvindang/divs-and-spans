@@ -29,6 +29,12 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // 308 keeps the method and body, so MCP POSTs to www survive the redirect
+    if (url.hostname === "www.divsandspans.com") {
+      url.hostname = "divsandspans.com";
+      return Response.redirect(url.toString(), 308);
+    }
+
     if (path === "/mcp" || path.startsWith("/mcp/")) return handleMcp(request, env, ctx);
 
     // Canvas page for /f/<file> and /f/<file>/<frame>

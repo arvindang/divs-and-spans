@@ -4,6 +4,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    { "pattern": "divsandspans.com", "custom_domain": true },
+    { "pattern": "www.divsandspans.com", "custom_domain": true }
+  ],
+  "workers_dev": true,
   "build": { "command": "npm run build:web", "watch_dir": ["src", "web"] },
   "assets": {
     "directory": "./public",
