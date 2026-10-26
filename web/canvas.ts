@@ -84,6 +84,7 @@ function applyCamera() {
   // one NaN (e.g. from a bad gesture value) would otherwise stick forever, Fit included
   if ([cam.x, cam.y, cam.z].every(Number.isFinite)) lastGoodCam = { ...cam };
   else cam = { ...lastGoodCam };
+  if (cam.z !== rasterZ) settleRaster();
   world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
   viewport.style.setProperty("--z", String(cam.z));
   viewport.style.setProperty("--bx", `${cam.x}px`);
@@ -91,6 +92,22 @@ function applyCamera() {
   $("#zoomLabel").textContent = `${Math.round(cam.z * 100)}%`;
   viewport.classList.toggle("tiny", cam.z < 0.3);
   scheduleFlows();
+}
+/**
+ * Browsers stretch a cached bitmap of the world while its scale changes and
+ * don't always repaint it once the zoom stops (Safari leaves it blurry).
+ * Hold the layer on will-change during a zoom and drop it after a pause,
+ * which makes the browser repaint at the new scale.
+ */
+let rasterZ = cam.z;
+let rasterTimer = 0;
+function settleRaster() {
+  world.style.willChange = "transform";
+  clearTimeout(rasterTimer);
+  rasterTimer = window.setTimeout(() => {
+    rasterZ = cam.z;
+    world.style.willChange = "";
+  }, 200);
 }
 function zoomAt(clientX: number, clientY: number, nextZ: number) {
   const z = Math.min(4, Math.max(0.05, nextZ));
