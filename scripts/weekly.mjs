@@ -127,7 +127,7 @@ const table = async (title, query, cols) => {
 await table(
   "Tool calls",
   `SELECT blob2 AS tool, SUM(_sample_interval) AS calls,
-     sumIf(_sample_interval, blob5 IN ('conflict', 'bad_link', 'not_found', 'error')) AS errors,
+     sumIf(_sample_interval, blob5 IN ('conflict', 'no_lock', 'bad_link', 'not_found', 'error')) AS errors,
      SUM(_sample_interval * double1) / SUM(_sample_interval) AS avg_ms
    FROM ${DATASET} WHERE ${span(0)} AND blob1 = 'tool' GROUP BY tool ORDER BY calls DESC`,
   [["tool", 14], ["calls", 8], ["errors", 7], ["avg_ms", 8]],
@@ -135,7 +135,7 @@ await table(
 await table(
   "Tool errors by kind",
   `SELECT blob2 AS tool, blob5 AS kind, SUM(_sample_interval) AS n FROM ${DATASET}
-   WHERE ${span(0)} AND blob1 = 'tool' AND blob5 IN ('conflict', 'bad_link', 'not_found', 'error')
+   WHERE ${span(0)} AND blob1 = 'tool' AND blob5 IN ('conflict', 'no_lock', 'bad_link', 'not_found', 'error')
    GROUP BY tool, kind ORDER BY n DESC LIMIT 15`,
   [["tool", 14], ["kind", 10], ["n", 6]],
 );

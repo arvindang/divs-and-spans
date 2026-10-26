@@ -42,8 +42,8 @@ ok(claim.lock && claim.frame_link, "start_frame returns a lock");
 const state = await (await fetch(`${base}/api/files/${file_link.split("/").pop()}`)).json();
 ok(state.frames[0].status === "working", "canvas sees the frame as working");
 
-await call("write_frame", { link: claim.frame_link, html: "<p>hi</p>" }, true);
-console.log("✓ write without the lock is rejected");
+const noLock = await call("write_frame", { link: claim.frame_link, html: "<p>hi</p>" }, true);
+ok(noLock.includes("didn't pass its lock"), "write without the lock is rejected, and the error asks for the lock");
 
 const todayHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Today</title>
 <style>
@@ -156,11 +156,18 @@ const fromEpisode = withFlows.flows.filter((f) => f.to === claim.frame_id);
 ok(fromEpisode.length === 2 && fromEpisode.some((f) => f.to_element === btnId && f.text === "Replay"), "get_file returns both flows, one landing on an element");
 ok(withFlows.dead_links?.length === 1 && withFlows.dead_links[0].link === "#nowhere", "in-page anchors and external links aren't flows");
 
-// 6. a second session can't steal a claimed frame
+// 6. the claim holder can renew its own claim; a second session can't steal it
 const c2 = await call("start_frame", { link: claim.frame_link, task: "Tightening the hero" });
+const renewed = await call("start_frame", { link: claim.frame_link, task: "Tightening the hero, take two", lock: c2.lock });
+const working = (await (await fetch(`${base}/api/files/${file_link.split("/").pop()}`)).json()).frames.find((f) => f.id === claim.frame_id);
+ok(renewed.lock === c2.lock && working.task === "Tightening the hero, take two", "start_frame with your own lock renews the claim");
 await call("start_frame", { link: claim.frame_link, task: "Other session" }, true);
-console.log("✓ a second session can't claim a frame that's in progress");
+const wrongLock = await call("start_frame", { link: claim.frame_link, task: "Other session", lock: "x".repeat(20) }, true);
+ok(wrongLock.includes("being worked on by another session"), "a second session can't claim a frame that's in progress, with or without a lock");
 await call("release_frame", { link: claim.frame_link, lock: c2.lock });
+const scratch = await call("start_frame", { link: file_link, name: "Scratch", task: "Trying an idea" });
+await call("delete_frame", { link: scratch.frame_link }, true);
+ok((await call("delete_frame", { link: scratch.frame_link, lock: scratch.lock })) === "Deleted.", "delete_frame takes the lock of a frame you claimed");
 
 const render = await fetch(`${base}/api/files/${file_link.split("/").pop()}/frames/${claim.frame_id}/render?theme=dark`);
 const rhtml = await render.text();

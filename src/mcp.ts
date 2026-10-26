@@ -21,7 +21,7 @@ The contract (structural only, the design itself is yours):
 6. Link screens with real links: href="#<frame_id>" on an <a>, or data-to="<frame_id>" on anything else (e.g. a <button>). Add /<element_id> to land on one element in that frame. The canvas draws these as the flow between frames, and get_file returns them as \`flows\`.
 7. Frames are responsive by default. The person previews them on a device of their choice (iPhone 402–440 wide, iPad 744–1032, laptop 1280, desktop 1440, Android 412), so let layouts adapt with media queries, container queries or clamp(). Pass \`width\` only for a screen that exists on one kind of device (e.g. 402 for a phone-only screen); it marks the screen as device-specific and opens the file on that kind of device, but the person can still preview it at any size. Don't draw status bars, notches or home indicators: the canvas draws device chrome. Keep content clear of it with padding of var(--ds-safe-top) and var(--ds-safe-bottom), which are 0 on desktop.
 
-Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.`;
+Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. Pass that lock to every call on a frame you've claimed, including another start_frame on it. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.`;
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
@@ -38,7 +38,8 @@ interface ToolEvent {
 
 /** Errors grouped by cause, so the weekly report can tell conflicts from bad links. */
 const errorKind = (message: string) =>
-  /being worked on|version conflict/i.test(message) ? "conflict"
+  /didn't pass its lock/i.test(message) ? "no_lock"
+  : /being worked on|version conflict/i.test(message) ? "conflict"
   : /couldn't read|file link|pass a frame link/i.test(message) ? "bad_link"
   : /not found/i.test(message) ? "not_found"
   : "error";
@@ -166,19 +167,26 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
     {
       title: "Start frame",
       description:
-        "Claim a frame before designing it. Omit frame to create a new one (name required). The canvas shows a working state with your task until you call write_frame with the returned lock. Claims expire after 10 minutes.",
+        "Claim a frame before designing it. Omit frame to create a new one (name required). The canvas shows a working state with your task until you call write_frame with the returned lock. Claims expire after 10 minutes. To renew a claim you hold (more time, new task), pass its lock; without it the frame reads as taken.",
       inputSchema: {
         link: z.string().describe("File link (new frame) or frame link (edit existing)"),
+        lock: z.string().optional().describe("Your lock for this frame, to renew a claim you already hold"),
         name: z.string().max(120).optional().describe("Frame name, e.g. '01 Home — empty state'"),
         task: z.string().max(200).describe("Short description of what you're doing, shown on the canvas"),
         width: z.number().int().min(240).max(3840).optional().describe("Only for a screen that exists on one kind of device: its width in px (e.g. 402 phone, 820 tablet). Omit for responsive frames. The person can preview any frame at any size."),
       },
     },
-    wrap("start_frame", async (a: { link: string; name?: string; task: string; width?: number }, ev) => {
+    wrap("start_frame", async (a: { link: string; lock?: string; name?: string; task: string; width?: number }, ev) => {
       const { fileId, frameId } = parse(a.link);
-      ev.detail = frameId ? "edit" : "new";
-      const { frame, lock } = await stubFor(fileId).startFrame({ frameId, name: a.name, task: a.task, width: a.width });
-      return text({ frame_link: L.frame(fileId, frame.id), frame_id: frame.id, lock, base_version: frame.version });
+      ev.detail = !frameId ? "new" : a.lock ? "renew" : "edit";
+      const { frame, lock } = await stubFor(fileId).startFrame({ frameId, name: a.name, task: a.task, width: a.width, lock: a.lock });
+      return text({
+        frame_link: L.frame(fileId, frame.id),
+        frame_id: frame.id,
+        lock,
+        base_version: frame.version,
+        next: "write_frame with this frame_link and lock. The frame stays claimed until then, and calls on it without the lock fail.",
+      });
     }),
   );
 
@@ -191,7 +199,7 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
       inputSchema: {
         link: z.string().describe("Frame link to update, or file link to create a new frame"),
         html: z.string().min(1).describe("Complete HTML document for the frame"),
-        lock: z.string().optional().describe("Lock token from start_frame"),
+        lock: z.string().optional().describe("Lock token from start_frame. Required when you claimed the frame"),
         name: z.string().max(120).optional().describe("Required when creating; renames when updating"),
         base_version: z.number().int().optional().describe("Version you edited; rejects the write if someone saved since"),
         width: z.number().int().min(240).max(3840).optional(),
@@ -265,13 +273,13 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
     {
       title: "Delete frame",
       description: "Delete a frame. Only do this when the person asks.",
-      inputSchema: { link: z.string() },
+      inputSchema: { link: z.string(), lock: z.string().optional().describe("Lock token, if you claimed the frame with start_frame") },
       annotations: { destructiveHint: true },
     },
-    wrap("delete_frame", async ({ link }: { link: string }) => {
+    wrap("delete_frame", async ({ link, lock }: { link: string; lock?: string }) => {
       const { fileId, frameId } = parse(link);
       if (!frameId) throw new Error("Pass a frame link.");
-      await stubFor(fileId).deleteFrame(frameId);
+      await stubFor(fileId).deleteFrame(frameId, lock);
       return text("Deleted.");
     }),
   );

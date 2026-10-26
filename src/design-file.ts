@@ -246,22 +246,31 @@ export class DesignFile extends DurableObject<Env> {
     const live = r.status === "working" && r.lock_expires !== null && r.lock_expires > Date.now();
     if (live && r.lock !== lock) {
       const mins = Math.ceil((r.lock_expires! - Date.now()) / 60000);
+      const task = r.task ? ` (task: ${r.task})` : "";
+      // sessions can't be told apart, so a call without the lock is as likely the claim holder's slip as a second session
+      if (!lock) {
+        throw new ToolError(
+          `Frame "${r.name}" is claimed${task} and this call didn't pass its lock. If you claimed it with start_frame, call again with the lock it returned. ` +
+            `Otherwise it's being worked on by another session: its claim expires in ~${mins} min, so work on a different frame or try again later.`,
+        );
+      }
       throw new ToolError(
-        `Frame "${r.name}" is being worked on by another session${r.task ? ` (task: ${r.task})` : ""}. ` +
+        `Frame "${r.name}" is being worked on by another session${task}; the lock you passed isn't the current claim on this frame. ` +
           `Its claim expires in ~${mins} min. Work on a different frame or try again later.`,
       );
     }
   }
 
-  /** Claim a frame (new or existing). The canvas shows a working state until write_frame. */
-  async startFrame(input: { frameId?: string; name?: string; task: string; width?: number | null }) {
+  /** Claim a frame (new or existing). The canvas shows a working state until write_frame. Passing the lock you hold renews the claim. */
+  async startFrame(input: { frameId?: string; name?: string; task: string; width?: number | null; lock?: string }) {
     this.requireFile();
     const now = Date.now();
-    const lock = newLockToken();
+    let lock = newLockToken();
     let id = input.frameId;
     if (id) {
       const r = this.row(id);
-      this.assertClaimable(r);
+      this.assertClaimable(r, input.lock);
+      if (input.lock && r.lock === input.lock) lock = input.lock;
       this.sql.exec(
         "UPDATE frames SET status = 'working', task = ?, lock = ?, lock_expires = ?, name = COALESCE(?, name), updated_at = ? WHERE id = ?",
         input.task, lock, now + LOCK_MS, input.name ?? null, now, id,
