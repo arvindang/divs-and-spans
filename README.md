@@ -83,3 +83,7 @@ Under 820px wide the tools move to a dock at the bottom: **Move** (one finger pa
 ## Not in the MVP yet
 
 Auth (file ids are unguessable capability URLs for now; anyone with a link can edit) · comments · pasted images (R2) · screenshots for the agent (Browser Run renders PNGs for people already; an MCP tool is next) · frame reordering on the canvas.
+
+## License
+
+[FSL-1.1-ALv2](LICENSE.md). Use, modify and self-host it for anything except a competing hosted service; each version becomes Apache 2.0 two years after it's released.
