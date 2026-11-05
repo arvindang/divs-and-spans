@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { newFrameId, newLockToken } from "./ids";
-import { flowMap, normalizeDocument, stampElementIds } from "./html";
+import { newCommentId, newFrameId, newLockToken, newThreadId } from "./ids";
+import { flowMap, normalizeDocument, resolveElement, stampElementIds } from "./html";
 import type { Env } from "./index";
 import { track } from "./analytics";
 
@@ -76,7 +76,122 @@ type Broadcast =
   | { type: "frame"; frame: FrameSummary }
   | { type: "frame-deleted"; id: string }
   | { type: "tokens"; version: number }
-  | { type: "file"; name: string };
+  | { type: "file"; name: string }
+  | { type: "thread"; thread: Thread }
+  | { type: "thread-deleted"; id: string };
+
+// ---------- comments ----------
+
+const MAX_THREADS = 2000;
+const MAX_COMMENTS_PER_THREAD = 200;
+const MAX_BODY = 4000;
+
+export type AuthorKind = "person" | "agent";
+export type ThreadStatus = "open" | "resolved";
+
+/** Who wrote a comment. There's no auth: people are a random id + name kept in their browser, and `secret` lets only that browser edit or delete what it wrote. */
+export interface CommentAuthor {
+  id: string;
+  name: string;
+  kind: AuthorKind;
+  secret?: string;
+}
+
+/** What the commenter was looking at, since "this overlaps" depends on the device and theme. */
+export interface ThreadView {
+  device: string;
+  w: number;
+  h: number;
+  theme: "light" | "dark";
+}
+
+/** The pinned element as it was when the thread started, so a deleted element can still be explained. */
+export interface ElementSnapshot {
+  tag: string;
+  outer_html: string;
+  path: string[];
+}
+
+export interface ThreadComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorKind: AuthorKind;
+  body: string;
+  createdAt: number;
+  editedAt: number | null;
+}
+
+/**
+ * A comment thread. It's pinned to an element (x/y are fractions of the
+ * element's box), to a spot on a frame (fractions of the frame's screen as
+ * shown; outside 0..1 means beside the frame), or to nothing (a note on the file).
+ */
+export interface Thread {
+  id: string;
+  frameId: string | null;
+  elementId: string | null;
+  x: number | null;
+  y: number | null;
+  view: ThreadView | null;
+  snapshot: ElementSnapshot | null;
+  status: ThreadStatus;
+  resolvedBy: string | null;
+  resolvedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  comments: ThreadComment[];
+}
+
+interface ThreadRow {
+  id: string;
+  frame_id: string | null;
+  element_id: string | null;
+  x: number | null;
+  y: number | null;
+  view: string | null;
+  snapshot: string | null;
+  status: ThreadStatus;
+  resolved_by: string | null;
+  resolved_at: number | null;
+  created_at: number;
+  updated_at: number;
+  [key: string]: SqlStorageValue;
+}
+
+interface CommentRow {
+  id: string;
+  thread_id: string;
+  author_id: string;
+  author_name: string;
+  author_kind: AuthorKind;
+  author_key: string | null;
+  body: string;
+  created_at: number;
+  edited_at: number | null;
+  [key: string]: SqlStorageValue;
+}
+
+const cleanBody = (body: string) => {
+  const b = (body ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!b) throw new ToolError("A comment needs some text.");
+  if (b.length > MAX_BODY) throw new ToolError(`Comments are limited to ${MAX_BODY} characters.`);
+  return b;
+};
+
+const cleanAuthor = (a: CommentAuthor): CommentAuthor => {
+  const name = (a?.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!name || !/^[a-z0-9:_-]{2,48}$/i.test(a?.id ?? "")) throw new ToolError("A comment needs an author id and name.");
+  if (a.kind === "person" && !/^[a-z0-9]{24,64}$/i.test(a.secret ?? "")) throw new ToolError("A comment needs the author's key.");
+  return { id: a.id, name, kind: a.kind === "agent" ? "agent" : "person", secret: a.secret };
+};
+
+const finite = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(-50, Math.min(50, v)) : null);
+
+async function keyHash(secret: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`ds-author:${secret}`));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /**
  * One Durable Object per design file. It owns the file's frames and tokens,
@@ -87,11 +202,15 @@ export class DesignFile extends DurableObject<Env> {
   private sql: SqlStorage;
   /** False until init() runs. Lookups of a file that doesn't exist must not write, or they'd count as stored objects. */
   private ready: boolean;
+  /** Comment tables arrived after files existed, so they're created on the first comment, not in createSchema. */
+  private commentsReady: boolean;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.ready = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").toArray().length > 0;
+    const tables = new Set(this.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray().map((r) => r.name));
+    this.ready = tables.has("meta");
+    this.commentsReady = tables.has("threads");
   }
 
   private createSchema() {
@@ -353,6 +472,219 @@ export class DesignFile extends DurableObject<Env> {
     this.assertClaimable(r, lock);
     this.sql.exec("DELETE FROM frames WHERE id = ?", frameId);
     this.broadcast({ type: "frame-deleted", id: frameId });
+  }
+
+  // ---------- comments ----------
+
+  private ensureComments() {
+    if (this.commentsReady) return;
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS threads (
+        id TEXT PRIMARY KEY,
+        frame_id TEXT,
+        element_id TEXT,
+        x REAL,
+        y REAL,
+        view TEXT,
+        snapshot TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        resolved_by TEXT,
+        resolved_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS comments (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        author_kind TEXT NOT NULL,
+        author_key TEXT,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        edited_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS comments_by_thread ON comments (thread_id, created_at);
+    `);
+    this.commentsReady = true;
+  }
+
+  private toThread(r: ThreadRow, comments: CommentRow[]): Thread {
+    return {
+      id: r.id,
+      frameId: r.frame_id,
+      elementId: r.element_id,
+      x: r.x,
+      y: r.y,
+      view: r.view ? (JSON.parse(r.view) as ThreadView) : null,
+      snapshot: r.snapshot ? (JSON.parse(r.snapshot) as ElementSnapshot) : null,
+      status: r.status,
+      resolvedBy: r.resolved_by,
+      resolvedAt: r.resolved_at,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      comments: comments.map((c) => ({
+        id: c.id,
+        authorId: c.author_id,
+        authorName: c.author_name,
+        authorKind: c.author_kind,
+        body: c.body,
+        createdAt: c.created_at,
+        editedAt: c.edited_at,
+      })),
+    };
+  }
+
+  private thread(threadId: string): Thread {
+    const r = this.commentsReady ? this.sql.exec<ThreadRow>("SELECT * FROM threads WHERE id = ?", threadId).toArray()[0] : undefined;
+    if (!r) throw new ToolError(`Comment ${threadId} not found in this file.`);
+    return this.toThread(r, this.sql.exec<CommentRow>("SELECT * FROM comments WHERE thread_id = ? ORDER BY created_at ASC", threadId).toArray());
+  }
+
+  /** Threads oldest first. Reads never create the comment tables. */
+  async listThreads(filter: { frameId?: string; status?: ThreadStatus } = {}): Promise<Thread[]> {
+    this.requireFile();
+    if (!this.commentsReady) return [];
+    const where: string[] = [];
+    const args: string[] = [];
+    if (filter.frameId) where.push("frame_id = ?"), args.push(filter.frameId);
+    if (filter.status) where.push("status = ?"), args.push(filter.status);
+    const rows = this.sql.exec<ThreadRow>(`SELECT * FROM threads${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at ASC`, ...args).toArray();
+    if (!rows.length) return [];
+    const byThread = new Map<string, CommentRow[]>();
+    for (const c of this.sql.exec<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC").toArray()) {
+      if (!byThread.has(c.thread_id)) byThread.set(c.thread_id, []);
+      byThread.get(c.thread_id)!.push(c);
+    }
+    return rows.map((r) => this.toThread(r, byThread.get(r.id) ?? []));
+  }
+
+  async getThread(threadId: string): Promise<Thread> {
+    this.requireFile();
+    return this.thread(threadId);
+  }
+
+  private async insertComment(threadId: string, body: string, author: CommentAuthor, now: number) {
+    const key = author.kind === "person" && author.secret ? await keyHash(author.secret) : null;
+    this.sql.exec(
+      "INSERT INTO comments (id, thread_id, author_id, author_name, author_kind, author_key, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      newCommentId(), threadId, author.id, author.name, author.kind, key, body, now,
+    );
+  }
+
+  /** Start a thread on an element, a spot on a frame, or the file itself. */
+  async createThread(input: {
+    frameId?: string | null;
+    elementId?: string | null;
+    x?: number | null;
+    y?: number | null;
+    view?: ThreadView | null;
+    body: string;
+    author: CommentAuthor;
+  }): Promise<Thread> {
+    this.requireFile();
+    const body = cleanBody(input.body);
+    const author = cleanAuthor(input.author);
+    const frameId = input.frameId || null;
+    const elementId = frameId ? input.elementId || null : null;
+    let snapshot: ElementSnapshot | null = null;
+    if (frameId) {
+      const r = this.row(frameId);
+      if (elementId) {
+        const el = resolveElement(r.html, elementId, 3000);
+        if (!el) throw new ToolError(`Element ${elementId} not found in frame "${r.name}".`);
+        snapshot = { tag: el.tag, outer_html: el.outer_html, path: el.path };
+      }
+    }
+    this.ensureComments();
+    const count = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM threads").toArray()[0].n;
+    if (count >= MAX_THREADS) throw new ToolError(`This file has reached ${MAX_THREADS} comment threads. Delete some resolved ones first.`);
+    const v = input.view;
+    const size = (n: unknown, max: number) => Math.max(0, Math.min(max, Math.round(Number(n)) || 0));
+    const view: ThreadView | null = v && typeof v.device === "string"
+      ? { device: v.device.slice(0, 40), w: size(v.w, 4000), h: size(v.h, 12000), theme: v.theme === "dark" ? "dark" : "light" }
+      : null;
+    const now = Date.now();
+    const id = newThreadId();
+    this.sql.exec(
+      "INSERT INTO threads (id, frame_id, element_id, x, y, view, snapshot, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+      id, frameId, elementId, frameId ? finite(input.x) : null, frameId ? finite(input.y) : null,
+      view ? JSON.stringify(view) : null, snapshot ? JSON.stringify(snapshot) : null, now, now,
+    );
+    await this.insertComment(id, body, author, now);
+    const thread = this.thread(id);
+    this.broadcast({ type: "thread", thread });
+    return thread;
+  }
+
+  /** Reply to a thread. A reply on a resolved thread reopens it: someone still has something to say. */
+  async reply(threadId: string, rawBody: string, rawAuthor: CommentAuthor): Promise<Thread> {
+    this.requireFile();
+    const body = cleanBody(rawBody);
+    const author = cleanAuthor(rawAuthor);
+    const t = this.thread(threadId);
+    if (t.comments.length >= MAX_COMMENTS_PER_THREAD) throw new ToolError(`This thread has reached ${MAX_COMMENTS_PER_THREAD} replies. Start a new one.`);
+    const now = Date.now();
+    await this.insertComment(threadId, body, author, now);
+    this.sql.exec("UPDATE threads SET status = 'open', resolved_by = NULL, resolved_at = NULL, updated_at = ? WHERE id = ?", now, threadId);
+    const thread = this.thread(threadId);
+    this.broadcast({ type: "thread", thread });
+    return thread;
+  }
+
+  /** Resolve or reopen. Anyone with the file can, as in other design tools. */
+  async setThreadStatus(threadId: string, status: ThreadStatus, byName: string): Promise<Thread> {
+    this.requireFile();
+    this.thread(threadId);
+    const now = Date.now();
+    const by = (byName ?? "").replace(/\s+/g, " ").trim().slice(0, 40) || "Someone";
+    if (status === "resolved") {
+      this.sql.exec("UPDATE threads SET status = 'resolved', resolved_by = ?, resolved_at = ?, updated_at = ? WHERE id = ?", by, now, now, threadId);
+    } else {
+      this.sql.exec("UPDATE threads SET status = 'open', resolved_by = NULL, resolved_at = NULL, updated_at = ? WHERE id = ?", now, threadId);
+    }
+    const thread = this.thread(threadId);
+    this.broadcast({ type: "thread", thread });
+    return thread;
+  }
+
+  private async ownComment(threadId: string, commentId: string, secret: string | undefined) {
+    this.thread(threadId);
+    const c = this.sql.exec<CommentRow>("SELECT * FROM comments WHERE id = ? AND thread_id = ?", commentId, threadId).toArray()[0];
+    if (!c) throw new ToolError(`Comment ${commentId} not found in this thread.`);
+    if (!c.author_key || !secret || c.author_key !== (await keyHash(secret))) {
+      throw new ToolError("That comment was written in another browser. Only its author can change it.");
+    }
+    return c;
+  }
+
+  async editComment(threadId: string, commentId: string, rawBody: string, secret?: string): Promise<Thread> {
+    this.requireFile();
+    const body = cleanBody(rawBody);
+    await this.ownComment(threadId, commentId, secret);
+    const now = Date.now();
+    this.sql.exec("UPDATE comments SET body = ?, edited_at = ? WHERE id = ?", body, now, commentId);
+    this.sql.exec("UPDATE threads SET updated_at = ? WHERE id = ?", now, threadId);
+    const thread = this.thread(threadId);
+    this.broadcast({ type: "thread", thread });
+    return thread;
+  }
+
+  /** Delete your own comment. The thread goes with its last comment. */
+  async deleteComment(threadId: string, commentId: string, secret?: string): Promise<Thread | null> {
+    this.requireFile();
+    await this.ownComment(threadId, commentId, secret);
+    this.sql.exec("DELETE FROM comments WHERE id = ?", commentId);
+    const left = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM comments WHERE thread_id = ?", threadId).toArray()[0].n;
+    if (!left) {
+      this.sql.exec("DELETE FROM threads WHERE id = ?", threadId);
+      this.broadcast({ type: "thread-deleted", id: threadId });
+      return null;
+    }
+    this.sql.exec("UPDATE threads SET updated_at = ? WHERE id = ?", Date.now(), threadId);
+    const thread = this.thread(threadId);
+    this.broadcast({ type: "thread", thread });
+    return thread;
   }
 
   // ---------- live canvas ----------

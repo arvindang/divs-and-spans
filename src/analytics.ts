@@ -4,10 +4,11 @@ import type { Env } from "./index";
  * Product analytics in Workers Analytics Engine (dataset divs_and_spans_events).
  * Every event uses the same columns so one query shape fits all of them:
  *
- *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser"
+ *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment"
  *   blob2 name     tool name · MCP client name · "canvas" · "web" · png "copy" | "download" | "zip" · browser "launch" | "reuse"
+ *                  · comment "create" | "reply" | "resolve" | "reopen" | "edit" | "delete" (people; the agent's are tool events)
  *   blob3 file     hashed file id ("" when there is none)
- *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, png)
+ *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, png, comment)
  *   blob5 detail   tool outcome/variant · device class · exported frame count · png "frame" | "element" | frame count | "error"
  *   blob6 country
  *   double1 ms     tool latency · session length · png request time · browser connected time
@@ -16,10 +17,10 @@ import type { Env } from "./index";
  *   index1         hashed file id, so sampling (if it ever kicks in) is per file
  *
  * File ids are capability URLs (anyone with one can edit), so they are hashed
- * before they leave the Durable Object. Frame HTML and prompts are never recorded.
+ * before they leave the Durable Object. Frame HTML, prompts and comment text are never recorded.
  */
 export interface AnalyticsEvent {
-  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser";
+  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment";
   name: string;
   fileId?: string;
   actor?: string;

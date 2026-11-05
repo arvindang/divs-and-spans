@@ -12,6 +12,8 @@ export const newFileId = () => randomId(14);
 export const newFrameId = () => randomId(8);
 export const newElementId = () => randomId(6);
 export const newLockToken = () => randomId(20);
+export const newThreadId = () => randomId(10);
+export const newCommentId = () => randomId(10);
 
 export interface ParsedLink {
   fileId: string;
@@ -19,6 +21,8 @@ export interface ParsedLink {
   elementId?: string;
   /** Every element in the hash: #a,b,c points at several elements in one frame. */
   elementIds?: string[];
+  /** A comment thread: ?c=<thread>. */
+  commentId?: string;
 }
 
 /**
@@ -27,19 +31,22 @@ export interface ParsedLink {
  *   https://host/f/<file>/<frame>
  *   https://host/f/<file>/<frame>#<element>
  *   https://host/f/<file>/<frame>#<element>,<element>,…
+ *   https://host/f/<file>[/<frame>]?c=<thread>
  *   <file>  |  <file>/<frame>  |  <file>/<frame>#<element>
  */
 export function parseLink(input: string): ParsedLink | null {
+  const commentId = input.match(/[?&]c=([a-z0-9]{6,32})/i)?.[1];
   const s = input.trim().replace(/\?[^#]*/, "");
   const m = s.match(/(?:^|\/f\/)([a-z0-9]{6,32})(?:\/([a-z0-9]{4,32}))?\/?(?:#([a-z0-9_-]{2,32}(?:,[a-z0-9_-]{2,32})*))?\/?$/i);
   if (!m) return null;
   const elementIds = m[3]?.split(",");
-  return { fileId: m[1], frameId: m[2] || undefined, elementId: elementIds?.[0], elementIds };
+  return { fileId: m[1], frameId: m[2] || undefined, elementId: elementIds?.[0], elementIds, ...(commentId ? { commentId } : {}) };
 }
 
 export const links = (origin: string) => ({
   file: (fileId: string) => `${origin}/f/${fileId}`,
   frame: (fileId: string, frameId: string) => `${origin}/f/${fileId}/${frameId}`,
   element: (fileId: string, frameId: string, elementId: string) => `${origin}/f/${fileId}/${frameId}#${elementId}`,
+  comment: (fileId: string, frameId: string | null, threadId: string) => `${origin}/f/${fileId}${frameId ? `/${frameId}` : ""}?c=${threadId}`,
   mcp: () => `${origin}/mcp`,
 });
