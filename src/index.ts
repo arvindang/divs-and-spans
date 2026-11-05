@@ -1,4 +1,4 @@
-import { DesignFile } from "./design-file";
+import { DesignFile, type CommentAuthor } from "./design-file";
 import { handleMcp } from "./mcp";
 import { newFileId } from "./ids";
 import { renderForCanvas } from "./html";
@@ -73,6 +73,49 @@ export default {
         const forward = new Request(request);
         forward.headers.set("x-ds-country", countryOf(request));
         return stub(m[1]).fetch(forward);
+      }
+
+      // comments: people on the canvas. The agent's side is the get_comments and comment MCP tools.
+      m = path.match(/^\/api\/files\/([a-z0-9]+)\/comments(?:\/([a-z0-9]+))?(?:\/([a-z0-9]+))?$/);
+      if (m) {
+        const [, fileId, threadId, commentId] = m;
+        const s = stub(fileId);
+        if (request.method === "GET" && !threadId) return json({ threads: await s.listThreads() });
+        if (request.method === "GET") return json(await s.getThread(threadId));
+        const body = (await request.json().catch(() => ({}))) as {
+          frameId?: string; elementId?: string; x?: number; y?: number; view?: any;
+          body?: string; author?: { id?: string; name?: string; secret?: string }; status?: string; by?: string; secret?: string; viewer?: string;
+        };
+        const author = { id: body.author?.id ?? "", name: body.author?.name ?? "", secret: body.author?.secret, kind: "person" } as CommentAuthor;
+        const note = (action: string) =>
+          ctx.waitUntil(track(env, { event: "comment", name: action, fileId, actor: /^[a-z0-9]{16}$/.test(body.viewer ?? "") ? body.viewer : "", detail: "person", country: countryOf(request) }));
+        if (request.method === "POST" && !threadId) {
+          const thread = await s.createThread({ ...body, body: body.body ?? "", author });
+          note("create");
+          return json(thread, 201);
+        }
+        if (request.method === "POST" && !commentId) {
+          const thread = await s.reply(threadId, body.body ?? "", author);
+          note("reply");
+          return json(thread, 201);
+        }
+        if (request.method === "PATCH" && !commentId) {
+          const status = body.status === "resolved" ? "resolved" : "open";
+          const thread = await s.setThreadStatus(threadId, status, body.by ?? "");
+          note(status === "resolved" ? "resolve" : "reopen");
+          return json(thread);
+        }
+        if (request.method === "PATCH" && commentId) {
+          const thread = await s.editComment(threadId, commentId, body.body ?? "", body.secret);
+          note("edit");
+          return json(thread);
+        }
+        if (request.method === "DELETE" && commentId) {
+          const thread = await s.deleteComment(threadId, commentId, body.secret);
+          note("delete");
+          return json({ thread });
+        }
+        return json({ error: "Method not allowed" }, 405);
       }
 
       m = path.match(/^\/api\/files\/([a-z0-9]+)\/tokens\.css$/);
@@ -177,7 +220,7 @@ export default {
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      return json({ error: message }, /not found/i.test(message) ? 404 : 400);
+      return json({ error: message }, /not found/i.test(message) ? 404 : /another browser/i.test(message) ? 403 : 400);
     }
 
     return env.ASSETS.fetch(request);

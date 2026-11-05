@@ -534,11 +534,111 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
 .recent a:hover { background: var(--panel-2); }
 .recent time { color: var(--muted); font-size: 12px; }
 
+/* ---------- comments ---------- */
+.btn .badge {
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 99px;
+  background: var(--accent); color: white; font: 600 11px/17px var(--font); text-align: center;
+}
+.pins { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.pin {
+  position: absolute; left: 0; top: -28px;
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px; border: 0; border-radius: 15px 15px 15px 3px;
+  background: var(--panel); box-shadow: 0 1px 3px #0003, 0 4px 14px #0002;
+  pointer-events: auto; cursor: pointer;
+  transform-origin: 0 100%;
+}
+.pin:hover, .pin.active { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px #0003; z-index: 1; }
+.pin i { font: 600 11px var(--font); font-style: normal; color: var(--muted); padding: 0 6px 0 2px; }
+.pin.resolved { opacity: 0.7; }
+.pin.off, .pin.detached { opacity: 0.55; }
+.pin.detached .av { outline: 2px dashed var(--danger); outline-offset: 1px; }
+.viewport.panning .pin { pointer-events: none; }
+.av {
+  flex: none; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--c, var(--muted)); color: white; font: 600 10px/1 var(--font); letter-spacing: 0.02em;
+}
+.av.agent { font-size: 12px; }
+
+.comments-panel {
+  position: fixed; top: 60px; right: 12px; bottom: 12px; z-index: 15;
+  width: 300px; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.comments-panel header { display: flex; align-items: center; gap: 6px; padding: 6px; border-bottom: 1px solid var(--line); }
+.comments-panel header > .btn { margin-left: auto; }
+.seg { display: flex; gap: 2px; }
+.seg .btn span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.seg .btn[aria-pressed="true"] span { color: inherit; }
+.threads { list-style: none; margin: 0; padding: 4px; overflow: auto; flex: 1; touch-action: pan-y; overscroll-behavior: contain; }
+.threads button {
+  display: flex; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: 8px;
+  background: none; text-align: left; cursor: pointer;
+}
+.threads button:hover { background: var(--panel-2); }
+.threads button[aria-current="true"] { background: var(--accent-soft); }
+.threads .txt { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.threads .meta, .thread-pop .meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.threads time, .thread-pop time { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+.threads .excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.threads .where, .thread-pop .where { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.threads code, .thread-pop code { font: 11px var(--mono); }
+.threads .empty { padding: 16px 12px; color: var(--muted); }
+.comments-panel footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 6px 6px 6px 12px; border-top: 1px solid var(--line); color: var(--muted);
+}
+.comments-panel footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me { border: 0; background: none; padding: 0; font-weight: 600; cursor: text; text-decoration: underline dotted; text-underline-offset: 3px; }
+.rename { width: 15ch; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel-2); }
+
+.thread-pop {
+  position: fixed; left: 0; top: 0; z-index: 25;
+  width: 320px; max-height: min(520px, calc(100dvh - 80px));
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 32px rgb(0 0 0 / 0.25);
+}
+.thread-pop .head { display: flex; align-items: center; gap: 2px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
+.thread-pop .head .where { flex: 1; min-width: 0; }
+.thread-pop .head .btn { height: 26px; padding: 0 8px; }
+.thread-pop .head [data-act="status"] { color: var(--accent); }
+.thread-pop .items { list-style: none; margin: 0; padding: 4px 0; overflow: auto; touch-action: pan-y; overscroll-behavior: contain; }
+.thread-pop .items:empty { display: none; }
+.thread-pop .items li { display: flex; gap: 10px; padding: 8px 12px; }
+.thread-pop .items .body { min-width: 0; flex: 1; }
+.thread-pop .items p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread-pop .items .note { color: var(--muted); font-size: 12px; }
+.thread-pop .tag { font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 0 5px; border-radius: 4px; }
+.thread-pop .own { display: none; gap: 6px; }
+.thread-pop li:hover .own, .thread-pop li:focus-within .own { display: inline-flex; }
+.thread-pop .own button, .thread-pop .as button { border: 0; background: none; padding: 0; color: var(--muted); font-size: 12px; cursor: pointer; }
+.thread-pop .own button:hover, .thread-pop .as button:hover { color: var(--accent); }
+.thread-pop form { padding: 8px; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+.thread-pop textarea {
+  width: 100%; resize: none; min-height: 40px; max-height: 160px; field-sizing: content;
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font: inherit; color: inherit;
+}
+.thread-pop textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.thread-pop .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+.thread-pop .as { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.commenting .toast { bottom: calc(var(--dock) + 20px); }
+
 @media (max-width: 1180px) {
   .hide-lg, .bar kbd { display: none !important; }
 }
 @media (max-width: 1100px) {
   .hide-md { display: none !important; }
+}
+@media (max-width: 820px) {
+  .not-phone { display: none !important; }
+}
+/* the dock holds one more tool than a 375px phone has room for at full padding */
+@media (max-width: 430px) {
+  nav.tools .btn { padding: 0 8px; }
+  .tools .stepper .btn { padding: 0 6px; }
+  .tools .sep { margin: 0 1px; }
 }
 @media (min-width: 821px) {
   .phone-only { display: none !important; }
@@ -564,6 +664,7 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
     max-width: calc(100vw - 16px);
   }
   .tools .btn { height: 40px; padding: 0 11px; }
+  .tools .btn .badge { margin-left: -2px; }
   .stepper { display: flex; align-items: center; }
   .stepper .btn { padding: 0 9px; font-size: 17px; }
   .stepper .count { font-size: 13px; min-width: 4.5ch; justify-content: center; padding: 0 2px; font-variant-numeric: tabular-nums; }
@@ -615,12 +716,21 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
   .pick-bar .btn { height: 38px; padding: 0 10px; }
   .pick-bar .btn[aria-pressed="true"] { color: var(--accent); }
   body.picking .toast { bottom: calc(var(--dock) + 68px); }
+
+  .comments-panel { top: auto; left: 8px; right: 8px; bottom: calc(var(--dock) + 8px); width: auto; max-width: 420px; margin: 0 auto; max-height: 38dvh; border-radius: 14px; }
+  .thread-pop {
+    left: 8px; right: 8px; top: auto; bottom: calc(var(--dock) + 8px); width: auto; max-width: 420px; margin: 0 auto;
+    transform: none !important; max-height: calc(100dvh - var(--dock) - 80px); border-radius: 14px;
+  }
+  .thread-pop textarea { font-size: 16px; }
+  .thread-pop .own { display: inline-flex; }
+  .threads button { padding: 10px 8px; }
 }
 
 /* ---------- touch: no hover, so show what hover would on the selected frame ---------- */
 @media (pointer: coarse) {
   /* Move: frames don't take touches, so one finger pans and two pinch anywhere */
-  body:not(.picking) .screen iframe { pointer-events: none; }
+  body:not(.picking, .commenting) .screen iframe { pointer-events: none; }
   .frame:not(.selected) .resize { display: none; }
   .frame.selected .resize { opacity: 1; }
   .frame-label kbd, .frame-actions kbd, .menu .item kbd { display: none !important; }

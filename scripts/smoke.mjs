@@ -27,7 +27,7 @@ const ok = (cond, msg) => {
 };
 
 const { tools } = await client.listTools();
-ok(tools.length === 8, `lists ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`);
+ok(tools.length === 10, `lists ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`);
 ok((client.getInstructions() || "").includes("tokens.css"), "server instructions carry the contract");
 
 const { file_link } = await call("create_file", { name: "Tidal Nocturne" });
@@ -168,6 +168,55 @@ await call("release_frame", { link: claim.frame_link, lock: c2.lock });
 const scratch = await call("start_frame", { link: file_link, name: "Scratch", task: "Trying an idea" });
 await call("delete_frame", { link: scratch.frame_link }, true);
 ok((await call("delete_frame", { link: scratch.frame_link, lock: scratch.lock })) === "Deleted.", "delete_frame takes the lock of a frame you claimed");
+
+// 7. comments: a person pins one on the canvas, the agent reads it, replies and resolves
+const fid = file_link.split("/").pop();
+const person = { id: "smokeperson00001", name: "Curious Capybara", secret: "s".repeat(32) };
+const api = (path, method = "GET", body) =>
+  fetch(`${base}/api/files/${fid}/comments${path}`, { method, headers: { "Content-Type": "application/json", "User-Agent": "ds-test/smoke" }, body: body && JSON.stringify(body) });
+ok((await api("", "POST", { frameId: claim.frame_id, body: "No key", author: { ...person, secret: undefined } })).status === 400, "a comment without the author's key is rejected");
+const posted = await (await api("", "POST", {
+  frameId: claim.frame_id, elementId: btnId, x: 0.9, y: 0.2, view: { device: "iphone-17", w: 402, h: 874, theme: "dark" },
+  body: "This button feels small on a phone.", author: person,
+})).json();
+ok(posted.id && posted.status === "open" && posted.snapshot?.tag === "button", "a person pins a comment to an element over REST");
+const commentLink = `${claim.frame_link}?c=${posted.id}`;
+const withComments = await call("get_file", { link: file_link });
+ok(withComments.open_comments?.count === 1 && withComments.open_comments.threads[0].link === commentLink, "get_file lists the open comment with its link");
+const frameWithComments = await call("get_frame", { link: claim.frame_link });
+ok(frameWithComments.open_comments?.[0]?.element === btnId, "get_frame lists the frame's open comments");
+const read = await call("get_comments", { link: file_link });
+const th = read.threads[0];
+ok(th.element.tag === "button" && th.element.outer_html.includes("Play today") && th.where.includes("top-right") && th.seen_on.includes("402×874, dark"),
+  `get_comments returns the pinned element's markup, where the pin is and the view (${th.where})`);
+ok((await call("get_comments", { link: commentLink })).threads.length === 1, "a comment link reads one thread");
+const done = await call("comment", { link: commentLink, text: "Made it full width on phones.", resolve: true });
+ok(done.status === "resolved" && done.replies === 1, "the agent replies and resolves in one call");
+const afterAgent = await (await api(`/${posted.id}`)).json();
+ok(afterAgent.status === "resolved" && afterAgent.comments[1].authorKind === "agent" && afterAgent.resolvedBy, "the canvas sees the agent's reply and the resolve");
+ok((await call("get_comments", { link: file_link })) === "No open comments in this file.", "resolved threads drop out of the open list");
+const reopened = await (await api(`/${posted.id}`, "POST", { body: "Still small in landscape.", author: person })).json();
+ok(reopened.status === "open" && reopened.comments.length === 3, "a person's reply reopens a resolved thread");
+const mine = reopened.comments[2].id;
+ok((await api(`/${posted.id}/${mine}`, "PATCH", { body: "Hijack", secret: "x".repeat(32) })).status === 403, "only the author's browser can edit a comment");
+ok((await (await api(`/${posted.id}/${mine}`, "PATCH", { body: "Still small in landscape, sorry.", secret: person.secret })).json()).comments[2].editedAt, "the author edits their comment");
+ok((await api(`/${posted.id}/${afterAgent.comments[1].id}`, "DELETE", {})).status === 403, "nobody can delete the agent's reply from the canvas");
+
+// removing a commented element warns; put it back so later checks still find the button
+const noButton = frame1b.html.replace(/<button class="btn"[^>]*>[^<]*<\/button>/, "");
+const wNo = await call("write_frame", { link: claim.frame_link, html: noButton });
+ok(wNo.warnings.some((w) => w.includes(`removed element ${btnId}`)) && wNo.open_comments, "write_frame warns when it removes an element with an open comment");
+const gone = (await call("get_comments", { link: commentLink })).threads[0].element;
+ok(gone.gone && gone.was.tag === "button", "a removed element comes back as gone, with how it looked");
+await call("write_frame", { link: claim.frame_link, html: frame1b.html });
+ok((await call("get_comments", { link: `${claim.frame_link}#${btnId}` })).threads.length === 1, "an element link filters comments to that element");
+
+const asked = await call("comment", { link: `${claim.frame_link}#${btnId}`, text: "Should this say Listen instead of Play?" });
+ok(/\?c=[a-z0-9]{10}$/.test(asked.comment_link), "the agent starts a thread on an element");
+await call("comment", { link: asked.comment_link }, true);
+const note = await (await api("", "POST", { body: "General: love the palette.", author: person })).json();
+ok(note.frameId === null && (await (await api(`/${note.id}/${note.comments[0].id}`, "DELETE", { secret: person.secret })).json()).thread === null,
+  "a file-level note is deleted with its last comment");
 
 const render = await fetch(`${base}/api/files/${file_link.split("/").pop()}/frames/${claim.frame_id}/render?theme=dark`);
 const rhtml = await render.text();

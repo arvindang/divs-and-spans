@@ -1,6 +1,7 @@
 import { $, copy, escapeHtml, prefs, rememberFile, toast, viewerId, wireCopyButtons } from "./shared";
 import { linksIn, resolveLink } from "../src/flows";
 import { CHROME_CSS, CHROME_HTML } from "../src/chrome";
+import { initComments } from "./comments";
 import { DEFAULT_BY_KIND, DEVICES, customDevice, deviceById, deviceForLegacyWidth, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
 
 // ---------- types (mirror src/design-file.ts) ----------
@@ -128,7 +129,9 @@ function fitRect(r: { x: number; y: number; w: number; h: number }, maxZ = 1) {
   // clear the bar plus the copy link on top, and the dock on phones
   const padTop = phone.matches ? $(".bar").getBoundingClientRect().bottom + 56 : 110;
   const padBottom = phone.matches ? innerHeight - $("#tools").getBoundingClientRect().top + 16 : 60;
-  const vw = viewport.clientWidth - padLeft - padX;
+  // the comments panel covers the right edge on desktop
+  const padRight = !phone.matches && document.body.classList.contains("commenting") ? 324 : padX;
+  const vw = viewport.clientWidth - padLeft - padRight;
   const vh = viewport.clientHeight - padTop - padBottom;
   const z = Math.min(maxZ, vw / r.w, vh / r.h);
   cam = {
@@ -267,7 +270,7 @@ viewport.addEventListener("pointerdown", (e) => {
   const onEmpty = e.target === viewport || e.target === world;
   if (e.pointerType === "touch") {
     // flow lines and resize handles keep their own touches
-    if ((e.target as Element).closest(".hit, .resize")) return;
+    if ((e.target as Element).closest(".hit, .resize, .pin")) return;
     if (e.isPrimary) touches.clear(); // a new gesture: drop any finger whose lift we missed
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touches.size === 1) {
@@ -351,12 +354,14 @@ function onKey(e: KeyboardEvent, down: boolean) {
   }
   if (!down || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "l" || e.key === "L") setPicking(!picking);
+  else if (e.key === "m" || e.key === "M") comments.toggle();
   else if (e.shiftKey && e.code === "KeyC" && (targets.length || selectedFrame)) copyImage();
   else if (e.shiftKey && e.code === "KeyS" && (targets.length || selectedFrame)) savePng();
   else if (e.shiftKey && e.code === "KeyE") savePngZip();
   else if ((e.key === "c" || e.key === "C") && (targets.length || selectedFrame)) copySelection();
   else if (e.key === "Escape") {
     if (document.body.classList.contains("view-open")) closeViewSheet();
+    else if (comments.escape()) {}
     else if (focusedEdge) focusEdge(null);
     else if (targets.length) setTargets([], false);
     else if (picking || flowsAll) {
@@ -416,6 +421,7 @@ function select(id: string | null) {
 
 function setPicking(on: boolean) {
   picking = on;
+  if (on) comments.toggle(false);
   if (!on) multi = false;
   $("#pickBtn").setAttribute("aria-pressed", String(on));
   $("#moveBtn").setAttribute("aria-pressed", String(!on));
@@ -565,7 +571,10 @@ async function savePngZip() {
 }
 
 $("#pickBtn").addEventListener("click", () => setPicking(!picking));
-$("#moveBtn").addEventListener("click", () => setPicking(false));
+$("#moveBtn").addEventListener("click", () => {
+  setPicking(false);
+  comments.toggle(false);
+});
 
 /** Touch's Shift: while on, taps add or remove elements instead of replacing the selection. */
 let multi = false;
@@ -625,7 +634,7 @@ function forEachDoc(fn: (doc: Document, frameId: string, iframe: HTMLIFrameEleme
 
 const PICK_CSS = `
 html { overscroll-behavior: none; }
-html[data-ds-picking] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
+html[data-ds-picking] *, html[data-ds-commenting] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
 [data-ds-hover] { outline: 2px solid #6d5dfc !important; outline-offset: -1px !important; }
 [data-ds-target] { outline: 2px solid #f59e0b !important; outline-offset: 2px !important; }
 [data-ds-target] [data-ds]:not([data-ds-hover]) { outline: 1px dashed rgb(245 158 11 / 0.45) !important; outline-offset: -1px !important; }
@@ -646,6 +655,7 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   style.textContent = PICK_CSS;
   (doc.head || doc.documentElement).append(style);
   doc.documentElement.toggleAttribute("data-ds-picking", picking);
+  doc.documentElement.toggleAttribute("data-ds-commenting", comments.on());
 
   const toParent = (e: MouseEvent | WheelEvent) => {
     const r = iframe.getBoundingClientRect();
@@ -686,16 +696,17 @@ function instrument(iframe: HTMLIFrameElement, frameId: string) {
   };
   let hovered: Element | null = null;
   doc.addEventListener("mouseover", (e) => {
-    if (!picking) return;
+    if (!picking && !comments.on()) return;
     hovered?.removeAttribute("data-ds-hover");
     hovered = pickable(e.target, e.altKey);
     hovered?.setAttribute("data-ds-hover", "");
   });
   doc.addEventListener("mouseleave", () => hovered?.removeAttribute("data-ds-hover"));
   // no text selection (drag or Shift-click) while selecting elements
-  doc.addEventListener("mousedown", (e) => picking && e.preventDefault(), true);
+  doc.addEventListener("mousedown", (e) => (picking || comments.on()) && e.preventDefault(), true);
   doc.addEventListener("click", (e) => {
     e.preventDefault(); // designs are static: links and buttons never navigate
+    if (comments.on()) return void comments.placeInFrame(frameId, iframe, e, pickable(e.target, e.altKey));
     if (!picking) {
       if (e.altKey) followLinkAt(doc, frameId, e.target as Element);
       return;
@@ -788,6 +799,7 @@ let drawnEdges: Edge[] = [];
 let flowRaf = 0;
 function scheduleFlows() {
   flowRaf ||= requestAnimationFrame(drawFlows);
+  comments.schedule();
 }
 
 const linksOf = (doc: Document) => {
@@ -1269,6 +1281,7 @@ function maybeInitialFocus() {
   const pending = [...frameEls.values()].some((el) => el.querySelector("iframe[data-loading]"));
   if (pending) return;
   didInitialFocus = true;
+  if (comments.initialFocus()) return;
   const hash = location.hash.slice(1);
   if (initialFrameId && frames.has(initialFrameId)) {
     if (hash) setTargets(hash.split(",").map((elementId) => ({ frameId: initialFrameId, elementId })), true);
@@ -1422,7 +1435,7 @@ function connect() {
       renderAll();
     } else if (msg.type === "file") {
       setName(msg.name);
-    }
+    } else comments.onMessage(msg);
   });
   ws.addEventListener("close", () => {
     setLive(false);
@@ -1481,6 +1494,7 @@ async function load() {
   }
   setName(file.name);
   rememberFile(file.id, file.name);
+  await comments.load();
   renderAll();
 }
 
@@ -1488,6 +1502,21 @@ addEventListener("hashchange", () => {
   const id = location.hash.slice(1);
   const fid = location.pathname.split("/")[3] || selectedFrame;
   if (id && fid) setTargets(id.split(",").map((elementId) => ({ frameId: fid, elementId })), true);
+});
+
+const comments = initComments({
+  fileId,
+  frameName: (id) => frames.get(id)?.name,
+  frameOrder: () => frameOrder,
+  primaryIframe,
+  view: () => {
+    const d = currentDevice();
+    return { device: d.id === "custom" ? `custom` : d.id, w: d.w, h: d.h, theme: schemes()[0] };
+  },
+  revealScreenRect: (r, maxZ) => fitRect({ x: (r.x - cam.x) / cam.z, y: (r.y - cam.y) / cam.z, w: r.w / cam.z, h: r.h / cam.z }, maxZ),
+  select,
+  stopPicking: () => picking && setPicking(false),
+  forEachDoc: (fn) => forEachDoc((doc) => fn(doc)),
 });
 
 applyCamera();
