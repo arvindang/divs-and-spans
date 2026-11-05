@@ -21,6 +21,8 @@ npx wrangler login
 npm run deploy       # prints https://divs-and-spans.<you>.workers.dev
 ```
 
+The live site deploys itself: every push to `main` runs `.github/workflows/deploy.yml`, which typechecks, runs `wrangler deploy`, and then runs the smoke test against https://divsandspans.com. Pull requests get the typecheck only. The workflow needs a `CLOUDFLARE_API_TOKEN` secret (the "Edit Cloudflare Workers" token template) and a `CLOUDFLARE_ACCOUNT_ID` repo variable.
+
 Then in Claude: **Settings → Connectors → Add custom connector** → `https://divs-and-spans.<you>.workers.dev/mcp`. Paste a file link into a chat with a task.
 
 Claude.ai connectors call your server from the cloud, so they need the deployed URL (or a tunnel: `cloudflared tunnel --url http://localhost:8787`). Claude Code can use localhost directly:

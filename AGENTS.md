@@ -11,7 +11,7 @@ npm run dev         # wrangler dev on :8787 (also runs build:web and watches src
 npm run smoke       # in a second terminal: end-to-end MCP run against :8787 (pass a base URL to target another host)
 npm run typecheck   # tsc for the worker (src/) and the canvas (web/), separate tsconfigs
 npm run build:web   # esbuild web/canvas.ts + web/home.ts -> public/js (gitignored, built by wrangler)
-npm run deploy      # wrangler deploy
+npm run deploy      # wrangler deploy (pushes to main also deploy, via .github/workflows/deploy.yml)
 npm run weekly      # Analytics Engine report; needs CF_ACCOUNT_ID and CF_API_TOKEN
 ```
 
