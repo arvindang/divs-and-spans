@@ -78,6 +78,8 @@ function deviceFromPins(fs: FrameSummary[]) {
   deviceSel.value = deviceId;
 }
 const schemes = (): Scheme[] => (themeMode === "both" ? ["light", "dark"] : [themeMode]);
+/** ⌘ on Apple devices, Ctrl elsewhere: the copy shortcuts follow the platform's own. */
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl+";
 const frameLink = (frameId: string, el?: string) => `${location.origin}/f/${fileId}/${frameId}${el ? `#${el}` : ""}`;
 
 // ---------- camera ----------
@@ -352,13 +354,19 @@ function onKey(e: KeyboardEvent, down: boolean) {
     e.preventDefault();
     return;
   }
-  if (!down || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!down) return;
+  // ⌘C copies the selection's link and ⌘⇧C its image, unless there's text highlighted to copy
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyC" && (targets.length || selectedFrame) && !hasTextSelection()) {
+    if (e.shiftKey) copyImage();
+    else copySelection();
+    e.preventDefault();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "l" || e.key === "L") setPicking(!picking);
-  else if (e.key === "m" || e.key === "M") comments.toggle();
-  else if (e.shiftKey && e.code === "KeyC" && (targets.length || selectedFrame)) copyImage();
+  else if (e.code === "KeyC" && !e.shiftKey) comments.toggle();
   else if (e.shiftKey && e.code === "KeyS" && (targets.length || selectedFrame)) savePng();
   else if (e.shiftKey && e.code === "KeyE") savePngZip();
-  else if ((e.key === "c" || e.key === "C") && (targets.length || selectedFrame)) copySelection();
   else if (e.key === "Escape") {
     if (document.body.classList.contains("view-open")) closeViewSheet();
     else if (comments.escape()) {}
@@ -387,6 +395,15 @@ function onKey(e: KeyboardEvent, down: boolean) {
     selectAndReveal(frameOrder[i < 0 ? (e.shiftKey ? n - 1 : 0) : (i + (e.shiftKey ? n - 1 : 1)) % n]);
   }  else return;
   e.preventDefault();
+}
+/** Text highlighted on the page or in a frame: ⌘C should copy that, as usual. */
+function hasTextSelection() {
+  if (getSelection()?.isCollapsed === false) return true;
+  let found = false;
+  forEachDoc((doc) => {
+    if (doc.getSelection()?.isCollapsed === false) found = true;
+  });
+  return found;
 }
 addEventListener("keydown", (e) => onKey(e, true));
 addEventListener("keyup", (e) => onKey(e, false));
@@ -458,8 +475,8 @@ function renderPickBar() {
     return;
   }
   const hints = [
-    n ? "<kbd>C</kbd> copy link" : "",
-    n ? "<kbd>⇧C</kbd> copy image" : "",
+    n ? `<kbd>${MOD}C</kbd> copy link` : "",
+    n ? `<kbd>${MOD}⇧C</kbd> copy image` : "",
     `<kbd>⇧</kbd> click to ${n ? "add or remove" : "select several"}`,
     "<kbd>⌥</kbd> click for parent",
     `<kbd>Esc</kbd> ${n ? "clear" : "done"}`,
@@ -521,7 +538,7 @@ function saveBlob(blob: Blob, name: string) {
 const pngFailed = (err: unknown) => toast(escapeHtml((err as Error).message || "Couldn't render the image"), 4000);
 
 /**
- * ⇧C: copy the selection as a PNG. The clipboard write has to start inside
+ * ⌘⇧C: copy the selection as a PNG. The clipboard write has to start inside
  * the click or key press (Safari), so it gets the render as a promise.
  */
 function copyImage(frameId?: string) {
@@ -993,9 +1010,9 @@ function buildFrameEl(f: FrameSummary) {
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
     </div>
     <div class="frame-actions">
-      <button class="img" data-act="image" title="Copy this frame as a PNG, as the canvas shows it (Shift+C when selected)">Copy image <kbd>⇧C</kbd></button>
+      <button class="img" data-act="image" title="Copy this frame as a PNG, as the canvas shows it (${MOD}Shift+C when selected)">Copy image <kbd>${MOD}⇧C</kbd></button>
       <button class="img" data-act="png" title="Download this frame as a PNG (Shift+S when selected)">PNG <kbd>⇧S</kbd></button>
-      <button data-act="link" title="Copy frame link (C when selected)">Copy link <kbd>C</kbd></button>
+      <button data-act="link" title="Copy frame link (${MOD}C when selected)">Copy link <kbd>${MOD}C</kbd></button>
     </div>
     <div class="frame-body"></div>
     <i class="resize e" data-axis="e" title="Drag to resize every frame"></i>

@@ -362,7 +362,7 @@ export function initComments(host: CommentsHost) {
     const badge = btn.querySelector<HTMLElement>(".badge")!;
     badge.textContent = String(counts.open);
     badge.hidden = !counts.open;
-    btn.title = `Comment: click a frame or the canvas to leave a comment (M)${counts.open ? ` · ${counts.open} open` : ""}`;
+    btn.title = `Comment: click a frame or the canvas to leave a comment (C)${counts.open ? ` · ${counts.open} open` : ""}`;
     for (const b of panel.querySelectorAll<HTMLElement>("[data-filter]")) {
       const f = b.dataset.filter as Status;
       b.setAttribute("aria-pressed", String(f === filter));
