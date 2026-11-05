@@ -420,6 +420,23 @@ select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
 .menu .item span { grid-column: 1; color: var(--muted); font-size: 12px; }
 .menu .item kbd { grid-column: 2; grid-row: 1; align-self: center; }
 .pop p { margin: 0 0 12px; color: var(--muted); }
+.menu .item.danger { color: var(--danger); }
+.menu .item.danger[data-confirm] { background: color-mix(in oklab, var(--danger) 14%, transparent); }
+
+/* trash: deleted frames with a restore each, then deleting the file */
+.pop.trash h3 { padding: 8px 10px 2px; }
+.trash-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow: auto; }
+.trash-list li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.trash-list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-list time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.trash-list .btn { border: 1px solid var(--line); }
+.trash-list .none { color: var(--muted); }
+.pop.trash .trash-note { margin: 4px 10px 6px; font-size: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+
+/* a file in the trash covers the canvas with its restore card */
+.trashed { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+.trashed .row { display: flex; gap: 8px; }
+.trashed .row .btn { height: 32px; padding: 0 14px; border: 1px solid var(--line); text-decoration: none; }
 .field { display: flex; gap: 6px; margin-bottom: 14px; }
 .field input {
   flex: 1;
@@ -492,6 +509,7 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
 .pick-bar kbd { color: var(--text); margin-right: 4px; }
 @media (max-width: 640px) { .pick-bar span:nth-of-type(n+3) { display: none; } }
 .toast code { font: 12px var(--mono); opacity: 0.75; }
+.toast kbd { font: 600 11px var(--font); padding: 1px 5px; border-radius: 4px; border: 1px solid currentColor; opacity: 0.75; }
 
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin: 0 6px; }
 .status-dot.live { background: #22a06b; }
@@ -537,6 +555,16 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
   text-decoration: none;
 }
 .recent a:hover { background: var(--panel-2); }
+.recent li { position: relative; }
+.recent li a { padding-right: 40px; }
+.recent .forget {
+  position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border: 0; border-radius: 6px; background: none;
+  color: var(--muted); font-size: 16px; cursor: pointer; opacity: 0;
+}
+.recent li:hover .forget, .recent .forget:focus-visible { opacity: 1; }
+.recent .forget:hover { background: var(--panel); color: var(--text); }
+@media (pointer: coarse) { .recent .forget { opacity: 1; } }
 .recent time { color: var(--muted); font-size: 12px; }
 
 /* ---------- comments ---------- */

@@ -10,6 +10,9 @@ const LOCK_MS = 10 * 60 * 1000;
 /** The canvas pings every 25s; a ping marked active (visible tab, recent input) counts as that much engaged time. */
 const PING_MS = 25 * 1000;
 
+/** Deleted files and frames wait this long in the trash, where anyone with the link can restore them, before they're erased. */
+export const TRASH_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** Kept on each socket (survives hibernation) so the session can be reported when it closes. */
 interface ViewerSession {
   viewer: string;
@@ -55,6 +58,21 @@ export interface FileState {
   frames: FrameSummary[];
 }
 
+/** A file in the trash: what the canvas shows instead of the frames. */
+export interface TrashedFile {
+  id: string;
+  name: string;
+  deletedAt: number;
+  purgeAt: number;
+}
+
+export interface TrashedFrame {
+  id: string;
+  name: string;
+  deletedAt: number;
+  purgeAt: number;
+}
+
 export class ToolError extends Error {}
 
 interface FrameRow {
@@ -69,6 +87,7 @@ interface FrameRow {
   position: number;
   width: number | null;
   updated_at: number;
+  deleted_at: number | null;
   [key: string]: SqlStorageValue;
 }
 
@@ -77,6 +96,8 @@ type Broadcast =
   | { type: "frame-deleted"; id: string }
   | { type: "tokens"; version: number }
   | { type: "file"; name: string }
+  | ({ type: "file-deleted" } & TrashedFile)
+  | { type: "file-restored" }
   | { type: "thread"; thread: Thread }
   | { type: "thread-deleted"; id: string };
 
@@ -211,6 +232,10 @@ export class DesignFile extends DurableObject<Env> {
     const tables = new Set(this.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray().map((r) => r.name));
     this.ready = tables.has("meta");
     this.commentsReady = tables.has("threads");
+    // files made before the trash existed hard-deleted frames; give them the column (no migration layer, see createSchema)
+    if (tables.has("frames") && !this.sql.exec<{ name: string }>("PRAGMA table_info(frames)").toArray().some((c) => c.name === "deleted_at")) {
+      this.sql.exec("ALTER TABLE frames ADD COLUMN deleted_at INTEGER");
+    }
   }
 
   private createSchema() {
@@ -228,7 +253,8 @@ export class DesignFile extends DurableObject<Env> {
         position INTEGER NOT NULL,
         width INTEGER,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        deleted_at INTEGER
       );
     `);
     this.ready = true;
@@ -244,8 +270,18 @@ export class DesignFile extends DurableObject<Env> {
   private setMeta(key: string, value: string) {
     this.sql.exec("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
   }
+  /** A trashed file reads as deleted everywhere except trashInfo() and restoreFile(). */
   private requireFile() {
     if (!this.meta("id")) throw new ToolError("Design file not found. Check the link, or create one with create_file.");
+    const t = this.trashed();
+    if (t) {
+      const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      throw new ToolError(`This design file was deleted on ${day(t.deletedAt)}. Anyone with its link can restore it from the canvas until ${day(t.purgeAt)}.`);
+    }
+  }
+  private trashed(): TrashedFile | null {
+    const at = Number(this.meta("deleted_at"));
+    return at ? { id: this.meta("id")!, name: this.meta("name")!, deletedAt: at, purgeAt: at + TRASH_MS } : null;
   }
 
   async init(id: string, name: string): Promise<FileState> {
@@ -264,6 +300,31 @@ export class DesignFile extends DurableObject<Env> {
     return !!this.meta("id");
   }
 
+  /** The file's trash state, or null if it isn't trashed (or doesn't exist). Never throws, so the canvas can offer a restore. */
+  async trashInfo(): Promise<TrashedFile | null> {
+    return this.meta("id") ? this.trashed() : null;
+  }
+
+  /** Move the file to the trash. Every canvas on it switches to the restore screen; the alarm erases it after TRASH_MS. */
+  async deleteFile(): Promise<TrashedFile> {
+    this.requireFile();
+    this.setMeta("deleted_at", String(Date.now()));
+    await this.scheduleAlarm();
+    const t = this.trashed()!;
+    this.broadcast({ type: "file-deleted", ...t });
+    return t;
+  }
+
+  async restoreFile(): Promise<FileState> {
+    if (!this.meta("id")) this.requireFile();
+    if (this.trashed()) {
+      this.sql.exec("DELETE FROM meta WHERE key = 'deleted_at'");
+      await this.scheduleAlarm();
+      this.broadcast({ type: "file-restored" });
+    }
+    return this.getState();
+  }
+
   async getState(): Promise<FileState> {
     this.requireFile();
     return {
@@ -272,7 +333,7 @@ export class DesignFile extends DurableObject<Env> {
       createdAt: Number(this.meta("created_at")),
       tokensVersion: Number(this.meta("tokens_version")),
       frames: this.sql
-        .exec<FrameRow>("SELECT * FROM frames ORDER BY position ASC")
+        .exec<FrameRow>("SELECT * FROM frames WHERE deleted_at IS NULL ORDER BY position ASC")
         .toArray()
         .map((r) => this.summarize(r))
         .sort((a, b) => Number(b.foundations) - Number(a.foundations)),
@@ -303,9 +364,10 @@ export class DesignFile extends DurableObject<Env> {
 
   // ---------- frames ----------
 
-  private row(frameId: string): FrameRow {
+  private row(frameId: string, includeDeleted = false): FrameRow {
     const r = this.sql.exec<FrameRow>("SELECT * FROM frames WHERE id = ?", frameId).toArray()[0];
     if (!r) throw new ToolError(`Frame ${frameId} not found in this file.`);
+    if (r.deleted_at && !includeDeleted) throw new ToolError(`Frame ${frameId} not found in this file: it was deleted, and the person can restore it from the canvas's Trash.`);
     return r;
   }
 
@@ -336,7 +398,7 @@ export class DesignFile extends DurableObject<Env> {
 
   async getFlows() {
     this.requireFile();
-    const rows = this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != ''").toArray();
+    const rows = this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != '' AND deleted_at IS NULL").toArray();
     return flowMap(this.meta("id")!, rows);
   }
 
@@ -344,7 +406,7 @@ export class DesignFile extends DurableObject<Env> {
   async getExport() {
     const state = await this.getState();
     const html = new Map(
-      this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != ''").toArray().map((r) => [r.id, r.html]),
+      this.sql.exec<{ id: string; html: string }>("SELECT id, html FROM frames WHERE html != '' AND deleted_at IS NULL").toArray().map((r) => [r.id, r.html]),
     );
     return {
       id: state.id,
@@ -466,12 +528,78 @@ export class DesignFile extends DurableObject<Env> {
     this.broadcast({ type: "frame", frame: this.summarize(this.row(frameId)) });
   }
 
-  async deleteFrame(frameId: string, lock?: string) {
+  /**
+   * Move a frame to the trash. The agent needs the lock of a frame it claimed;
+   * a person on the canvas can delete any frame (their call wins over a claim).
+   */
+  async deleteFrame(frameId: string, lock?: string, byPerson = false) {
     this.requireFile();
     const r = this.row(frameId);
-    this.assertClaimable(r, lock);
-    this.sql.exec("DELETE FROM frames WHERE id = ?", frameId);
+    if (!byPerson) this.assertClaimable(r, lock);
+    this.sql.exec(
+      "UPDATE frames SET deleted_at = ?, status = 'ready', task = NULL, lock = NULL, lock_expires = NULL WHERE id = ?",
+      Date.now(), frameId,
+    );
+    await this.scheduleAlarm();
     this.broadcast({ type: "frame-deleted", id: frameId });
+  }
+
+  async restoreFrame(frameId: string): Promise<FrameSummary> {
+    this.requireFile();
+    if (this.row(frameId, true).deleted_at) {
+      this.sql.exec("UPDATE frames SET deleted_at = NULL WHERE id = ?", frameId);
+      await this.scheduleAlarm();
+    }
+    const frame = this.summarize(this.row(frameId));
+    this.broadcast({ type: "frame", frame });
+    return frame;
+  }
+
+  /** Deleted frames, newest first. */
+  async listTrash(): Promise<TrashedFrame[]> {
+    this.requireFile();
+    return this.sql
+      .exec<{ id: string; name: string; deleted_at: number }>("SELECT id, name, deleted_at FROM frames WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
+      .toArray()
+      .map((r) => ({ id: r.id, name: r.name, deletedAt: r.deleted_at, purgeAt: r.deleted_at + TRASH_MS }));
+  }
+
+  // ---------- trash ----------
+
+  /** One alarm covers the trash: it fires when the oldest deleted thing (the file or a frame) is due to be erased. */
+  private async scheduleAlarm() {
+    const due = [Number(this.meta("deleted_at")), this.sql.exec<{ t: number | null }>("SELECT MIN(deleted_at) AS t FROM frames").toArray()[0]?.t ?? 0]
+      .filter((t) => t > 0)
+      .map((t) => t + TRASH_MS);
+    if (due.length) await this.ctx.storage.setAlarm(Math.min(...due));
+    else await this.ctx.storage.deleteAlarm();
+  }
+
+  async alarm() {
+    if (!this.ready) return;
+    const cutoff = Date.now() - TRASH_MS;
+    const fileDeleted = Number(this.meta("deleted_at"));
+    if (fileDeleted && fileDeleted <= cutoff) {
+      for (const ws of this.ctx.getWebSockets()) {
+        try {
+          ws.close(1000, "deleted");
+        } catch {}
+      }
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      this.ready = false;
+      this.commentsReady = false;
+      return;
+    }
+    const gone = this.sql.exec<{ id: string }>("SELECT id FROM frames WHERE deleted_at IS NOT NULL AND deleted_at <= ?", cutoff).toArray().map((r) => r.id);
+    for (const id of gone) {
+      if (this.commentsReady) {
+        this.sql.exec("DELETE FROM comments WHERE thread_id IN (SELECT id FROM threads WHERE frame_id = ?)", id);
+        this.sql.exec("DELETE FROM threads WHERE frame_id = ?", id);
+      }
+      this.sql.exec("DELETE FROM frames WHERE id = ?", id);
+    }
+    await this.scheduleAlarm();
   }
 
   // ---------- comments ----------

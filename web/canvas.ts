@@ -1,4 +1,4 @@
-import { $, copy, escapeHtml, prefs, rememberFile, toast, viewerId, wireCopyButtons } from "./shared";
+import { $, copy, escapeHtml, forgetFile, prefs, rememberFile, toast, viewerId, wireCopyButtons } from "./shared";
 import { linksIn, resolveLink } from "../src/flows";
 import { CHROME_CSS, CHROME_HTML } from "../src/chrome";
 import { initComments } from "./comments";
@@ -348,6 +348,7 @@ function tapAt(e: PointerEvent) {
 function onKey(e: KeyboardEvent, down: boolean) {
   const tag = (document.activeElement?.tagName || "").toLowerCase();
   if (tag === "input" || tag === "select" || tag === "textarea") return;
+  if (!trashedCard.hidden) return;
   if (e.code === "Space") {
     spaceDown = down;
     viewport.classList.toggle("space", down);
@@ -362,8 +363,17 @@ function onKey(e: KeyboardEvent, down: boolean) {
     e.preventDefault();
     return;
   }
+  // ⌘Z brings back the frames you deleted here, newest first
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === "KeyZ" && undoStack.length) {
+    restoreFrame(undoStack.pop()!);
+    e.preventDefault();
+    return;
+  }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === "l" || e.key === "L") setPicking(!picking);
+  const del = e.key === "Backspace" || e.key === "Delete";
+  if (del && e.shiftKey) toggleTrash();
+  else if (del && selectedFrame && !targets.length) deleteFrame(selectedFrame);
+  else if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if (e.code === "KeyC" && !e.shiftKey) comments.toggle();
   else if (e.shiftKey && e.code === "KeyS" && (targets.length || selectedFrame)) savePng();
   else if (e.shiftKey && e.code === "KeyE") savePngZip();
@@ -379,6 +389,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
     } else select(null);
     $("#connectPop").hidden = true;
     closeExport();
+    closeTrash();
   } else if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) fitAll();
   else if (e.key === ")" || (e.shiftKey && e.code === "Digit0")) zoomAt(innerWidth / 2, innerHeight / 2, 1);
   else if (e.key === "=" || e.key === "+") zoomAt(innerWidth / 2, innerHeight / 2, cam.z * 1.25);
@@ -1419,6 +1430,7 @@ function closeExport() {
 const togglePop = () => {
   pop.hidden = !pop.hidden;
   closeExport();
+  closeTrash();
   closeViewSheet();
 };
 $("#connectBtn").addEventListener("click", togglePop);
@@ -1435,11 +1447,154 @@ $("#exportBtn").addEventListener("click", () => {
   exportPop.hidden = !exportPop.hidden;
   $("#exportBtn").setAttribute("aria-expanded", String(!exportPop.hidden));
   pop.hidden = true;
+  closeTrash();
   closeViewSheet();
 });
 $("#exportPng").addEventListener("click", savePngZip);
 $("#promptEx").textContent = `${location.origin}/f/${fileId}\nDesign the home screen for …`;
 wireCopyButtons();
+
+// ---------- trash ----------
+// No auth, so anyone with the link can delete; the trash makes that recoverable for anyone with the link too.
+interface Trashed {
+  id: string;
+  name: string;
+  deletedAt: number;
+  purgeAt: number;
+}
+const trashPop = $("#trashPop");
+const trashedCard = $("#trashed");
+const deleteFileBtn = $("#deleteFileBtn");
+/** Frames deleted from this canvas this visit, newest last. */
+const undoStack: string[] = [];
+
+async function fileApi<T = any>(path: string, method = "GET"): Promise<T> {
+  const res = await fetch(`/api/files/${fileId}${path}`, { method });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body as T;
+}
+const failed = (err: unknown) => toast(escapeHtml((err as Error).message), 4000);
+function ago(ms: number) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+async function deleteFrame(id: string) {
+  const f = frames.get(id);
+  if (!f) return;
+  try {
+    await fileApi(`/frames/${id}`, "DELETE");
+  } catch (err) {
+    return failed(err);
+  }
+  undoStack.push(id);
+  if (targets.some((t) => t.frameId === id)) setTargets([], false);
+  if (selectedFrame === id) select(null);
+  frames.delete(id);
+  renderAll();
+  if (!trashPop.hidden) renderTrash();
+  toast(`Deleted “${escapeHtml(f.name)}” · <kbd>${MOD}Z</kbd> to undo`, 5000);
+}
+
+async function restoreFrame(id: string) {
+  const i = undoStack.lastIndexOf(id);
+  if (i >= 0) undoStack.splice(i, 1);
+  try {
+    const f = await fileApi<FrameSummary>(`/frames/${id}/restore`, "POST");
+    frames.set(f.id, f);
+    renderAll();
+    selectAndReveal(f.id);
+    toast(`Restored “${escapeHtml(f.name)}”`);
+  } catch (err) {
+    failed(err);
+  }
+  if (!trashPop.hidden) renderTrash();
+}
+
+async function renderTrash() {
+  const sel = selectedFrame && frames.get(selectedFrame);
+  deleteFrameBtn.hidden = !sel;
+  if (sel) deleteFrameBtn.firstChild!.textContent = `Delete “${sel.name}” `;
+  let items: Trashed[] = [];
+  try {
+    items = (await fileApi<{ frames: Trashed[] }>("/trash")).frames;
+  } catch {}
+  $("#trashList").innerHTML = items.length
+    ? items
+        .map((t) => `<li><span class="name">${escapeHtml(t.name)}</span><time>${ago(t.deletedAt)}</time><button class="btn" data-restore="${t.id}">Restore</button></li>`)
+        .join("")
+    : `<li class="none">No deleted frames.</li>`;
+}
+const deleteFrameBtn = $("#deleteFrameBtn");
+deleteFrameBtn.querySelector("span")!.textContent = `The selected frame. ${MOD}Z or Restore below brings it back.`;
+deleteFrameBtn.addEventListener("click", () => selectedFrame && deleteFrame(selectedFrame));
+$("#trashList").addEventListener("click", (e) => {
+  const id = (e.target as Element).closest<HTMLElement>("[data-restore]")?.dataset.restore;
+  if (id) restoreFrame(id);
+});
+
+function closeTrash() {
+  trashPop.hidden = true;
+  $("#trashBtn").setAttribute("aria-expanded", "false");
+  disarmDelete();
+}
+function toggleTrash() {
+  const open = trashPop.hidden;
+  closeExport();
+  pop.hidden = true;
+  closeViewSheet();
+  if (!open) return closeTrash();
+  trashPop.hidden = false;
+  $("#trashBtn").setAttribute("aria-expanded", "true");
+  renderTrash();
+}
+$("#trashBtn").addEventListener("click", toggleTrash);
+
+// deleting the file takes a second click within a few seconds
+let armTimer = 0;
+const deleteLabel = deleteFileBtn.firstChild!;
+function disarmDelete() {
+  clearTimeout(armTimer);
+  delete deleteFileBtn.dataset.confirm;
+  deleteLabel.textContent = "Delete this file";
+}
+deleteFileBtn.addEventListener("click", async () => {
+  if (deleteFileBtn.dataset.confirm === undefined) {
+    deleteFileBtn.dataset.confirm = "";
+    deleteLabel.textContent = `Click again to delete “${file?.name ?? "this file"}”`;
+    armTimer = window.setTimeout(disarmDelete, 4000);
+    return;
+  }
+  disarmDelete();
+  try {
+    const t = await fileApi<Trashed>("", "DELETE");
+    forgetFile(fileId);
+    showTrashed(t);
+  } catch (err) {
+    failed(err);
+  }
+});
+
+function showTrashed(t: Trashed) {
+  closeTrash();
+  closeExport();
+  pop.hidden = true;
+  const day = new Date(t.purgeAt).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+  $("#trashedText").textContent = `“${t.name}” was deleted ${ago(t.deletedAt)}. Anyone with this link can restore it until ${day}. After that it's erased for good.`;
+  trashedCard.hidden = false;
+  document.title = `Deleted · ${t.name} · Divs & Spans`;
+}
+$("#restoreFileBtn").addEventListener("click", async () => {
+  try {
+    await fileApi("/restore", "POST");
+  } catch (err) {
+    return failed(err);
+  }
+  trashedCard.hidden = true;
+  await load();
+  toast("File restored");
+});
 
 // ---------- live sync ----------
 let ws: WebSocket | null = null;
@@ -1459,9 +1614,16 @@ function connect() {
     if (msg.type === "frame") {
       frames.set(msg.frame.id, msg.frame);
       renderAll();
+      if (!trashPop.hidden) renderTrash();
     } else if (msg.type === "frame-deleted") {
       frames.delete(msg.id);
       renderAll();
+      if (!trashPop.hidden) renderTrash();
+    } else if (msg.type === "file-deleted") {
+      showTrashed(msg);
+    } else if (msg.type === "file-restored") {
+      trashedCard.hidden = true;
+      load();
     } else if (msg.type === "tokens") {
       tokensVersion = msg.version;
       renderAll();
@@ -1516,6 +1678,9 @@ async function load() {
     ws?.close();
     return;
   }
+  // in the trash: keep the socket, so a restore from another browser brings the canvas back
+  if (res.status === 410) return showTrashed(await res.json());
+  trashedCard.hidden = true;
   file = (await res.json()) as FileState;
   tokensVersion = file.tokensVersion;
   frames.clear();

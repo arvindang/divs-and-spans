@@ -77,6 +77,7 @@
     </div>
     <div class="group">
       <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code (E) or every frame as PNG (Shift+E)">Export <kbd>E</kbd></button>
+      <button class="btn" id="trashBtn" aria-expanded="false" aria-controls="trashPop" title="Trash: restore deleted frames, or delete this file (Shift+Backspace)">Trash <kbd class="k2">⇧⌫</kbd></button>
       <button class="btn primary" id="connectBtn">Connect</button>
     </div>
   </div>
@@ -97,6 +98,22 @@
   <a class="item" id="exportZip" download>Code &amp; tokens (.zip) <kbd>E</kbd><span>Every frame as .html, tokens.css and a README for another agent</span></a>
   <button class="item" id="exportPng">All frames as PNG (.zip) <kbd>⇧E</kbd><span>At 2x, as the canvas shows them: device, theme, bezel, height</span></button>
 </section>
+
+<section class="pop menu trash" id="trashPop" hidden>
+  <button class="item" id="deleteFrameBtn" hidden>Delete frame <kbd>⌫</kbd><span>The selected frame. ⌘Z or Restore below brings it back.</span></button>
+  <h3>Recently deleted</h3>
+  <ol class="trash-list" id="trashList"></ol>
+  <p class="trash-note">Deleted frames stay here for 30 days. Anyone with the file link can restore them.</p>
+  <button class="item danger" id="deleteFileBtn">Delete this file<span>Moves it to the trash for 30 days. Anyone with the link can restore it until then.</span></button>
+</section>
+
+<div class="trashed" id="trashed" hidden>
+  <div class="empty-card">
+    <h2>This file is in the trash</h2>
+    <p id="trashedText"></p>
+    <div class="row"><button class="btn primary" id="restoreFileBtn">Restore file</button><a class="btn" href="/">All files</a></div>
+  </div>
+</div>
 
 <div class="empty" id="empty" hidden>
   <div class="empty-card">

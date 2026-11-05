@@ -117,6 +117,11 @@ export function rememberFile(id: string, name: string) {
   prefs.set("recent", list.slice(0, 12));
 }
 
+/** Drop a file from this browser's recent list. Only the list: the file itself is untouched. */
+export function forgetFile(id: string) {
+  prefs.set("recent", prefs.get<Recent[]>("recent", []).filter((r) => r.id !== id));
+}
+
 /** Wire every [data-copy="<inputId>"] button to copy that input's value. */
 export function wireCopyButtons() {
   document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {

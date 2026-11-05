@@ -64,8 +64,33 @@ export default {
           const body = (await request.json()) as { name?: string };
           if (body.name) await s.renameFile(body.name.slice(0, 120));
         }
+        if (request.method === "DELETE") {
+          const trashed = await s.deleteFile();
+          ctx.waitUntil(track(env, { event: "trash", name: "file-delete", fileId: m[1], country: countryOf(request) }));
+          return json({ deleted: true, ...trashed });
+        }
         if (!(await s.exists())) return json({ error: "not_found" }, 404);
+        const trashed = await s.trashInfo();
+        if (trashed) return json({ deleted: true, ...trashed }, 410);
         return json(await s.getState());
+      }
+
+      // the trash: anyone with the link can delete, so anyone with the link can restore
+      m = path.match(/^\/api\/files\/([a-z0-9]+)\/restore$/);
+      if (m && request.method === "POST") {
+        const state = await stub(m[1]).restoreFile();
+        ctx.waitUntil(track(env, { event: "trash", name: "file-restore", fileId: m[1], country: countryOf(request) }));
+        return json(state);
+      }
+      m = path.match(/^\/api\/files\/([a-z0-9]+)\/trash$/);
+      if (m) return json({ frames: await stub(m[1]).listTrash() });
+      m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)(\/restore)?$/);
+      if (m && (request.method === "DELETE" || (request.method === "POST" && m[3]))) {
+        const [, fileId, frameId, restore] = m;
+        const s = stub(fileId);
+        const result = restore ? await s.restoreFrame(frameId) : (await s.deleteFrame(frameId, undefined, true), { deleted: true });
+        ctx.waitUntil(track(env, { event: "trash", name: restore ? "frame-restore" : "frame-delete", fileId, country: countryOf(request) }));
+        return json(result);
       }
 
       m = path.match(/^\/api\/files\/([a-z0-9]+)\/ws$/);
@@ -220,7 +245,7 @@ export default {
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      return json({ error: message }, /not found/i.test(message) ? 404 : /another browser/i.test(message) ? 403 : 400);
+      return json({ error: message }, /not found/i.test(message) ? 404 : /was deleted/i.test(message) ? 410 : /another browser/i.test(message) ? 403 : 400);
     }
 
     return env.ASSETS.fetch(request);

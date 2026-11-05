@@ -4,9 +4,10 @@ import type { Env } from "./index";
  * Product analytics in Workers Analytics Engine (dataset divs_and_spans_events).
  * Every event uses the same columns so one query shape fits all of them:
  *
- *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment"
+ *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment" | "trash"
  *   blob2 name     tool name · MCP client name · "canvas" · "web" · png "copy" | "download" | "zip" · browser "launch" | "reuse"
  *                  · comment "create" | "reply" | "resolve" | "reopen" | "edit" | "delete" (people; the agent's are tool events)
+ *                  · trash "file-delete" | "file-restore" | "frame-delete" | "frame-restore" (people on the canvas)
  *   blob3 file     hashed file id ("" when there is none)
  *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, png, comment)
  *   blob5 detail   tool outcome/variant · device class · exported frame count · png "frame" | "element" | frame count | "error"
@@ -20,7 +21,7 @@ import type { Env } from "./index";
  * before they leave the Durable Object. Frame HTML, prompts and comment text are never recorded.
  */
 export interface AnalyticsEvent {
-  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment";
+  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment" | "trash";
   name: string;
   fileId?: string;
   actor?: string;

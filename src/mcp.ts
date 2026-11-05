@@ -45,6 +45,7 @@ const errorKind = (message: string) =>
   : /being worked on|version conflict/i.test(message) ? "conflict"
   : /couldn't read|file link|pass a frame link/i.test(message) ? "bad_link"
   : /not found/i.test(message) ? "not_found"
+  : /was deleted/i.test(message) ? "deleted"
   : "error";
 
 
@@ -354,7 +355,7 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
     "delete_frame",
     {
       title: "Delete frame",
-      description: "Delete a frame. Only do this when the person asks.",
+      description: "Delete a frame. Only do this when the person asks. It goes to the file's trash, where the person can restore it from the canvas for 30 days.",
       inputSchema: { link: z.string(), lock: z.string().optional().describe("Lock token, if you claimed the frame with start_frame") },
       annotations: { destructiveHint: true },
     },

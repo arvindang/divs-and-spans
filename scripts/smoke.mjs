@@ -21,6 +21,7 @@ const call = async (name, args, expectError = false) => {
     return text;
   }
 };
+const fileIdOf = (link) => link.split("/").pop();
 const ok = (cond, msg) => {
   if (!cond) throw new Error(`✗ ${msg}`);
   console.log(`✓ ${msg}`);
@@ -168,6 +169,16 @@ await call("release_frame", { link: claim.frame_link, lock: c2.lock });
 const scratch = await call("start_frame", { link: file_link, name: "Scratch", task: "Trying an idea" });
 await call("delete_frame", { link: scratch.frame_link }, true);
 ok((await call("delete_frame", { link: scratch.frame_link, lock: scratch.lock })) === "Deleted.", "delete_frame takes the lock of a frame you claimed");
+{
+  const fid = file_link.split("/").pop();
+  const rest = (path, method = "GET") => fetch(`${base}/api/files/${fid}${path}`, { method, headers: { "User-Agent": "ds-test/smoke" } });
+  const trash = await (await rest("/trash")).json();
+  ok(trash.frames.length === 1 && trash.frames[0].id === scratch.frame_id && trash.frames[0].purgeAt > Date.now(), "a deleted frame waits in the trash");
+  ok((await call("get_frame", { link: scratch.frame_link }, true)).includes("restore it from the canvas"), "the agent hears a deleted frame can be restored");
+  ok((await rest(`/frames/${scratch.frame_id}/restore`, "POST")).ok && (await call("get_frame", { link: scratch.frame_link })).frame.name === "Scratch", "anyone with the link restores a frame");
+  ok((await rest(`/frames/${scratch.frame_id}`, "DELETE")).ok, "a person deletes a frame from the canvas without a lock");
+  ok(!(await (await rest("")).json()).frames.some((f) => f.id === scratch.frame_id), "the canvas state leaves out deleted frames");
+}
 
 // 7. comments: a person pins one on the canvas, the agent reads it, replies and resolves
 const fid = file_link.split("/").pop();
@@ -229,6 +240,18 @@ ok(exp.headers.get("content-disposition")?.includes('filename="tidal-nocturne.zi
 ok(["README.md", "index.html", "tokens.css", "01-00-foundations.html", "02-01-today.html", "03-02-episode.html"].every((n) => n in zip), "export has README, index, tokens and every frame in canvas order");
 ok(zip["03-02-episode.html"].includes('href="02-01-today.html"') && zip["03-02-episode.html"].includes('href="tokens.css"'), "exported frames link tokens.css and each other");
 ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README lists the flows");
+
+// the file's trash: deleted files read as deleted everywhere until someone with the link restores them
+{
+  const rest = (path, method = "GET") => fetch(`${base}/api/files/${fileIdOf(file_link)}${path}`, { method, headers: { "User-Agent": "ds-test/smoke" } });
+  const del = await (await rest("", "DELETE")).json();
+  ok(del.deleted && del.purgeAt - del.deletedAt === 30 * 24 * 3600 * 1000, "deleting a file moves it to a 30-day trash");
+  const gone = await rest("");
+  ok(gone.status === 410 && (await gone.json()).name === "Tidal Nocturne", "a deleted file's link answers 410 with what's needed to restore it");
+  ok((await call("get_file", { link: file_link }, true)).includes("was deleted"), "the agent hears the file was deleted");
+  ok((await rest("/tokens.css")).status === 410, "the file's other routes are closed while it's in the trash");
+  ok((await rest("/restore", "POST")).ok && (await call("get_file", { link: file_link })).frames.length === 3, "anyone with the link restores the file, frames and all");
+}
 
 // PNGs: rendered by Browser Run, so this needs the browser binding (local Chromium under wrangler dev)
 const fileId = file_link.split("/").pop();
