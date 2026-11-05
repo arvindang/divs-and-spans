@@ -92,7 +92,7 @@ function applyCamera() {
   viewport.style.setProperty("--z", String(cam.z));
   viewport.style.setProperty("--bx", `${cam.x}px`);
   viewport.style.setProperty("--by", `${cam.y}px`);
-  $("#zoomLabel").textContent = `${Math.round(cam.z * 100)}%`;
+  $("#zoomLabel .z").textContent = `${Math.round(cam.z * 100)}%`;
   viewport.classList.toggle("tiny", cam.z < 0.3);
   scheduleFlows();
 }
@@ -387,6 +387,8 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "h" || e.key === "H") setFullHeight(!fullHeight);
   else if (e.key === "d" || e.key === "D") setChrome(!showChrome);
   else if (e.key === "p" || e.key === "P") setFlowsAll(!flowsAll);
+  else if (e.key === "t" || e.key === "T") setTheme(THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length]);
+  else if (e.key === "[" || e.key === "]") stepDevice(e.key === "]" ? 1 : -1);
   else if (e.key === "e" || e.key === "E") $("#exportZip").click();
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
@@ -1307,12 +1309,25 @@ function maybeInitialFocus() {
 }
 
 // ---------- controls ----------
+const THEMES: ThemeMode[] = ["light", "dark", "both"];
+function setTheme(mode: ThemeMode) {
+  themeMode = mode;
+  prefs.set("theme", themeMode);
+  renderAll();
+}
 for (const btn of document.querySelectorAll<HTMLElement>("[data-theme-mode]")) {
-  btn.addEventListener("click", () => {
-    themeMode = btn.dataset.themeMode as ThemeMode;
-    prefs.set("theme", themeMode);
-    renderAll();
-  });
+  btn.addEventListener("click", () => setTheme(btn.dataset.themeMode as ThemeMode));
+}
+/** [ and ]: the previous or next device in the picker's order. */
+function stepDevice(by: 1 | -1) {
+  const ids = [...(custom ? ["custom"] : []), ...DEVICES.map((d) => d.id)];
+  deviceId = ids[(ids.indexOf(deviceId) + by + ids.length) % ids.length];
+  deviceSel.value = deviceId;
+  saveDevice();
+  renderAll();
+  resizeScreens();
+  const d = currentDevice();
+  toast(`${escapeHtml(d.name)} · ${d.w} × ${d.h}`, 1200);
 }
 const deviceSel = $("#deviceSel") as HTMLSelectElement;
 function renderDevicePicker() {

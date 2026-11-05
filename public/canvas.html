@@ -46,7 +46,7 @@
   <!-- tools: in the bar on desktop, a dock at the bottom on phones -->
   <nav class="group tools" id="tools" aria-label="Tools">
     <button class="btn phone-only" id="moveBtn" aria-pressed="true" title="Move: drag to pan, pinch to zoom">Move</button>
-    <button class="btn" id="pickBtn" aria-pressed="false" title="Select an element to copy its link · Shift-click to select more (L)">Select<span class="hide-lg">element</span> <kbd>L</kbd></button>
+    <button class="btn" id="pickBtn" aria-pressed="false" title="Select an element to copy its link · Shift-click to select more (L)">Select <kbd>L</kbd></button>
     <button class="btn" id="flowsBtn" aria-pressed="false" title="Show every link between frames (P) · A selected element always shows its own links · Alt-click a link in a frame to follow it">Flows <kbd>P</kbd></button>
     <button class="btn" id="commentBtn" aria-pressed="false" title="Comment: click a frame or the canvas to leave a comment (C)" aria-label="Comment"><svg class="phone-only" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9l-4 3.2V14.5H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="not-phone">Comment</span> <kbd>C</kbd><span class="badge" hidden></span></button>
     <div class="sep phone-only"></div>
@@ -61,17 +61,19 @@
   <!-- view settings: in the bar on desktop, a sheet above the dock on phones -->
   <div class="view-sheet" id="viewSheet">
     <div class="group view">
-      <button class="btn" data-theme-mode="light" aria-pressed="false" title="Light">Light</button>
-      <button class="btn" data-theme-mode="dark" aria-pressed="false" title="Dark">Dark</button>
-      <button class="btn" data-theme-mode="both" aria-pressed="false" title="Light and dark side by side">Both</button>
+      <button class="btn" data-theme-mode="light" aria-pressed="false" title="Light (T cycles)" aria-label="Light"><svg class="not-phone" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span class="phone-only">Light</span></button>
+      <button class="btn" data-theme-mode="dark" aria-pressed="false" title="Dark (T cycles)" aria-label="Dark"><svg class="not-phone" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span class="phone-only">Dark</span></button>
+      <button class="btn" data-theme-mode="both" aria-pressed="false" title="Light and dark side by side (T cycles)" aria-label="Both"><svg class="not-phone" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg><span class="phone-only">Both</span></button>
+      <kbd class="hint k2" title="T cycles Light, Dark and Both">T</kbd>
       <div class="sep"></div>
-      <select class="btn" id="deviceSel" aria-label="Device to preview frames on" title="Device to preview frames on"></select>
+      <select class="btn" id="deviceSel" aria-label="Device to preview frames on" title="Device to preview frames on ([ and ] step through devices)"></select>
+      <kbd class="hint k2" title="[ previous device · ] next device">[</kbd><kbd class="hint k2" title="[ previous device · ] next device">]</kbd>
       <button class="btn" id="chromeBtn" aria-pressed="false" title="Show device chrome: status bar, Dynamic Island, home indicator (D)">Bezel <kbd>D</kbd></button>
-      <button class="btn" id="fullBtn" aria-pressed="false" title="Show every frame at full page height instead of one screen (H)">Full height <kbd>H</kbd></button>
+      <button class="btn" id="fullBtn" aria-pressed="false" title="Show every frame at full page height instead of one screen (H)">Full<span class="hide-lg">&nbsp;height</span> <kbd>H</kbd></button>
     </div>
     <div class="group">
-      <button class="btn" id="fitBtn" title="Zoom to fit (Shift+1)">Fit</button>
-      <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0)">100%</button>
+      <button class="btn" id="fitBtn" title="Zoom to fit (Shift+1)">Fit <kbd class="k2">⇧1</kbd></button>
+      <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0) · + and − zoom in and out"><span class="z">100%</span> <kbd class="k2">⇧0</kbd></button>
     </div>
     <div class="group">
       <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code (E) or every frame as PNG (Shift+E)">Export <kbd>E</kbd></button>
@@ -110,7 +112,7 @@
       <button class="btn" data-filter="open" aria-pressed="true">Open <span>0</span></button>
       <button class="btn" data-filter="resolved" aria-pressed="false">Resolved <span>0</span></button>
     </div>
-    <button class="btn" data-act="close" title="Leave comment mode (Esc)" aria-label="Close comments">✕</button>
+    <button class="btn" data-act="close" title="Leave comment mode (Esc)" aria-label="Close comments">✕ <kbd>Esc</kbd></button>
   </header>
   <ol class="threads"></ol>
   <footer>
@@ -124,7 +126,7 @@
   <ol class="items"></ol>
   <form>
     <textarea rows="2" maxlength="4000" aria-label="Comment"></textarea>
-    <div class="row"><span class="as"></span><button class="btn primary" type="submit">Post</button></div>
+    <div class="row"><span class="as"></span><button class="btn primary" type="submit"><span class="label">Post</span> <kbd>↵</kbd></button></div>
   </form>
 </section>
 

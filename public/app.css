@@ -96,17 +96,28 @@ a { color: inherit; }
 .btn:hover { background: var(--panel-2); }
 .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .btn.primary { background: var(--accent); color: white; }
-.btn kbd {
-  font: 11px var(--mono);
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 4px;
+/* keycaps: every action shows its key, Fizzy-style */
+.btn kbd, .menu .item kbd, .pick-bar kbd, .group > kbd.hint {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
   padding: 0 4px;
+  font: 600 11px/1 var(--font);
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  white-space: nowrap;
 }
-.btn[aria-pressed="true"] kbd { color: inherit; border-color: currentColor; }
+.btn[aria-pressed="true"] kbd { color: inherit; border-color: currentColor; background: transparent; }
+.btn.primary kbd { color: white; background: transparent; border-color: rgb(255 255 255 / 0.55); }
+.group > kbd.hint { margin: 0 2px; cursor: default; }
+.group > kbd.hint + kbd.hint { margin-left: -1px; }
 .sep { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
 .zoom { min-width: 5ch; justify-content: center; font-variant-numeric: tabular-nums; }
-select.btn { appearance: none; padding-right: 10px; }
+select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
 
 /* ---------- viewport ---------- */
 .viewport {
@@ -193,10 +204,11 @@ select.btn { appearance: none; padding-right: 10px; }
 .frame-actions button:hover { color: var(--accent); }
 .frame:not(:hover, .selected) .frame-actions .img { display: none; }
 .frame-label kbd, .frame-actions kbd {
-  font: 0.85em var(--mono);
+  font: 600 0.8em var(--font);
   border: calc(1px / var(--z, 1)) solid var(--line);
-  border-radius: 0.3em;
-  padding-inline: 0.3em;
+  border-bottom-width: calc(2px / var(--z, 1));
+  border-radius: 0.38em;
+  padding: 0.05em 0.35em;
   margin-inline-start: 0.3em;
 }
 .frame.selected .frame-label .name { color: var(--accent); }
@@ -406,7 +418,7 @@ select.btn { appearance: none; padding-right: 10px; }
 }
 .menu .item:hover { background: var(--panel-2); }
 .menu .item span { grid-column: 1; color: var(--muted); font-size: 12px; }
-.menu .item kbd { grid-column: 2; grid-row: 1; font: 11px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; align-self: center; }
+.menu .item kbd { grid-column: 2; grid-row: 1; align-self: center; }
 .pop p { margin: 0 0 12px; color: var(--muted); }
 .field { display: flex; gap: 6px; margin-bottom: 14px; }
 .field input {
@@ -477,14 +489,7 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
 .pick-bar b { color: var(--accent); font-weight: 600; }
 .pick-bar .btn { pointer-events: auto; color: var(--text); }
 .pick-bar .actions { display: flex; gap: 2px; margin-left: auto; }
-.pick-bar kbd {
-  font: 11px var(--mono);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0 4px;
-  margin-right: 4px;
-}
+.pick-bar kbd { color: var(--text); margin-right: 4px; }
 @media (max-width: 640px) { .pick-bar span:nth-of-type(n+3) { display: none; } }
 .toast code { font: 12px var(--mono); opacity: 0.75; }
 
@@ -625,8 +630,15 @@ body.picking .toast { bottom: calc(var(--dock) + 72px); }
 .thread-pop .as { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.commenting .toast { bottom: calc(var(--dock) + 20px); }
 
+/* the bar is full: secondary keycaps go first, then all of them (tooltips still name every key) */
+@media (max-width: 1519px) {
+  .bar kbd.k2 { display: none !important; }
+}
+@media (max-width: 1379px) {
+  .bar kbd { display: none !important; }
+}
 @media (max-width: 1180px) {
-  .hide-lg, .bar kbd { display: none !important; }
+  .hide-lg { display: none !important; }
 }
 @media (max-width: 1100px) {
   .hide-md { display: none !important; }
@@ -733,5 +745,5 @@ body.commenting .toast { bottom: calc(var(--dock) + 20px); }
   body:not(.picking, .commenting) .screen iframe { pointer-events: none; }
   .frame:not(.selected) .resize { display: none; }
   .frame.selected .resize { opacity: 1; }
-  .frame-label kbd, .frame-actions kbd, .menu .item kbd { display: none !important; }
+  .frame-label kbd, .frame-actions kbd, .menu .item kbd, .thread-pop kbd, .comments-panel kbd { display: none !important; }
 }

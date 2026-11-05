@@ -41,6 +41,7 @@ export interface CommentsHost {
   forEachDoc(fn: (doc: Document) => void): void;
 }
 
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl+";
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const initials = (c: ThreadComment) =>
   c.authorKind === "agent" ? "✦" : c.authorName.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
@@ -209,9 +210,9 @@ export function initComments(host: CommentsHost) {
       const resolved = t.status === "resolved";
       head.innerHTML =
         `<span class="where">${where(t, t)}</span>` +
-        `<button class="btn icon" data-act="status" title="${resolved ? "Reopen" : "Resolve"}" aria-pressed="${resolved}">${resolved ? "Reopen" : "✓ Resolve"}</button>` +
+        `<button class="btn icon" data-act="status" title="${resolved ? "Reopen" : "Resolve"} (${MOD}Enter; with a reply typed, sends it first)" aria-pressed="${resolved}">${resolved ? "Reopen" : "✓ Resolve"} <kbd>${MOD}↵</kbd></button>` +
         `<button class="btn icon" data-act="link" title="Copy link to this comment">Link</button>` +
-        `<button class="btn icon" data-act="close" aria-label="Close">✕</button>`;
+        `<button class="btn icon" data-act="close" title="Close (Esc)" aria-label="Close">✕ <kbd>Esc</kbd></button>`;
       items.innerHTML = t.comments.map((c) => {
         const mine = c.authorKind === "person" && c.authorId === me.id;
         return `<li data-comment="${c.id}">${avatar(c)}<div class="body">` +
@@ -221,7 +222,7 @@ export function initComments(host: CommentsHost) {
           `</div><p>${escapeHtml(c.body)}</p></div></li>`;
       }).join("") + (resolved ? `<li class="note">Resolved by ${escapeHtml(t.resolvedBy ?? "someone")}. Replying reopens it.</li>` : "");
     } else {
-      head.innerHTML = `<span class="where">${where((active as { draft: Spot }).draft)}</span><button class="btn icon" data-act="close" aria-label="Close">✕</button>`;
+      head.innerHTML = `<span class="where">${where((active as { draft: Spot }).draft)}</span><button class="btn icon" data-act="close" title="Close (Esc)" aria-label="Close">✕ <kbd>Esc</kbd></button>`;
       items.innerHTML = "";
     }
     // keep what's being typed when a live update re-renders the thread
@@ -231,7 +232,7 @@ export function initComments(host: CommentsHost) {
       const c = editing ? t?.comments.find((x) => x.id === editing) : null;
       input.value = c?.body ?? "";
       input.placeholder = t ? "Reply…" : "Add a comment…";
-      submit.textContent = editing ? "Save" : t ? "Reply" : "Post";
+      submit.querySelector(".label")!.textContent = editing ? "Save" : t ? "Reply" : "Post";
       if (!coarse()) requestAnimationFrame(() => input.focus());
     }
     form.querySelector<HTMLElement>(".as")!.innerHTML = editing
@@ -263,9 +264,9 @@ export function initComments(host: CommentsHost) {
     schedule();
   }
 
-  async function send() {
+  async function send(): Promise<boolean> {
     const body = input.value.trim();
-    if (!body || !active) return;
+    if (!body || !active) return false;
     const me = commenter();
     const author = { id: me.id, name: me.name, secret: me.secret };
     submit.disabled = true;
@@ -288,8 +289,10 @@ export function initComments(host: CommentsHost) {
       renderPopover();
       renderPanel();
       schedule();
+      return true;
     } catch (err) {
       failed(err);
+      return false;
     } finally {
       submit.disabled = false;
     }
@@ -301,7 +304,15 @@ export function initComments(host: CommentsHost) {
   });
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
+      // ⌘↵: send what's typed, then resolve (or reopen) the thread
+      e.preventDefault();
+      (async () => {
+        const wasDraft = !!active && "draft" in active;
+        if (input.value.trim() && !(await send())) return;
+        if (!wasDraft && activeThread()) toggleStatus();
+      })();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();
     } else if (e.key === "Escape") {
@@ -312,6 +323,23 @@ export function initComments(host: CommentsHost) {
       } else close();
     }
   });
+
+  async function toggleStatus() {
+    const t = activeThread();
+    if (!t) return;
+    const status: Status = t.status === "open" ? "resolved" : "open";
+    try {
+      upsert((await api(`/${t.id}`, "PATCH", { status, by: commenter().name, viewer: viewerId() })) as Thread);
+    } catch (err) {
+      return failed(err);
+    }
+    if (status === "resolved") {
+      toast("Resolved");
+      close();
+    } else renderPopover();
+    renderPanel();
+    schedule();
+  }
 
   pop.addEventListener("click", async (e) => {
     const act = (e.target as Element).closest<HTMLElement>("[data-act]")?.dataset.act;
@@ -326,16 +354,8 @@ export function initComments(host: CommentsHost) {
     const commentId = (e.target as Element).closest<HTMLElement>("[data-comment]")?.dataset.comment;
     try {
       if (act === "link") copy(linkTo(t), "Copied comment link");
-      else if (act === "status") {
-        const status: Status = t.status === "open" ? "resolved" : "open";
-        upsert((await api(`/${t.id}`, "PATCH", { status, by: me.name, viewer: viewerId() })) as Thread);
-        if (status === "resolved") {
-          toast("Resolved");
-          close();
-        } else renderPopover();
-        renderPanel();
-        schedule();
-      } else if (act === "edit" && commentId) {
+      else if (act === "status") await toggleStatus();
+      else if (act === "edit" && commentId) {
         editing = commentId;
         renderPopover();
       } else if (act === "delete" && commentId) {
