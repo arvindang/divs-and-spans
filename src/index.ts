@@ -2,9 +2,7 @@ import { DesignFile, type CommentAuthor } from "./design-file";
 import { handleMcp } from "./mcp";
 import { newFileId } from "./ids";
 import { renderForCanvas } from "./html";
-import { buildExport, frameFileName, slugify } from "./export";
-import { openShooter, parseView, viewKey, type Shooter } from "./screenshot";
-import { zipSync } from "fflate";
+import { buildExport } from "./export";
 import { countryOf, track } from "./analytics";
 
 export { DesignFile };
@@ -12,7 +10,6 @@ export { DesignFile };
 export interface Env {
   DESIGN_FILES: DurableObjectNamespace<DesignFile>;
   ASSETS: Fetcher;
-  BROWSER: Fetcher;
   EVENTS?: AnalyticsEngineDataset;
 }
 
@@ -165,61 +162,6 @@ export default {
         });
       }
 
-      m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)\/png$/);
-      if (m) {
-        const [, fileId, frameId] = m;
-        const s = stub(fileId);
-        const [frame, tokens] = await Promise.all([s.getFrame(frameId), s.getTokens()]);
-        if (!frame.html) return json({ error: "This frame has no content yet" }, 404);
-        const view = parseView(url.searchParams);
-        const elements = (url.searchParams.get("el") ?? "").split(",").filter((id) => /^[a-z0-9_-]{2,32}$/i.test(id)).slice(0, 50);
-        const usage = pngUsage(env, ctx, request, fileId, url.searchParams.get("via") === "copy" ? "copy" : "download");
-        let shooter: Shooter | null = null;
-        try {
-          const { png, scale } = await cachedShot(ctx, `${fileId}/${frameId}/${frame.version}/${tokens.version}/${viewKey(view)}/${elements.join(",")}`, async () => {
-            shooter = await openShooter(env.BROWSER);
-            return shooter.shoot(frame.html, tokens.css, view, elements);
-          });
-          await usage.done(shooter, elements.length ? "element" : "frame", png.byteLength);
-          return new Response(png, { headers: { "Content-Type": "image/png", "X-DS-Scale": String(scale), "Cache-Control": "no-cache" } });
-        } catch (e) {
-          await usage.done(shooter, "error");
-          return shotError(e);
-        }
-      }
-
-      m = path.match(/^\/api\/files\/([a-z0-9]+)\/png\.zip$/);
-      if (m) {
-        const data = await stub(m[1]).getExport();
-        const view = parseView(url.searchParams);
-        const usage = pngUsage(env, ctx, request, data.id, "zip");
-        let shooter: Shooter | null = null;
-        try {
-          const files: Record<string, Uint8Array> = {};
-          const folder = `${slugify(data.name) || data.id}-png`;
-          for (const [i, f] of data.frames.entries()) {
-            const { png } = await cachedShot(ctx, `${data.id}/${f.id}/${f.version}/${data.tokensVersion}/${viewKey(view)}/`, async () => {
-              shooter ??= await openShooter(env.BROWSER);
-              return shooter.shoot(f.html, data.tokens, view);
-            });
-            files[`${folder}/${frameFileName(f, i, "png")}`] = png;
-          }
-          // PNGs are already compressed: store them
-          const zip = zipSync(files, { level: 0 });
-          await usage.done(shooter, String(data.frames.length), zip.byteLength);
-          return new Response(zip, {
-            headers: {
-              "Content-Type": "application/zip",
-              "Content-Disposition": `attachment; filename="${folder}.zip"`,
-              "Cache-Control": "no-store",
-            },
-          });
-        } catch (e) {
-          await usage.done(shooter, "error");
-          return shotError(e);
-        }
-      }
-
       m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)\/(render|source)$/);
       if (m) {
         const [, fileId, frameId, kind] = m;
@@ -251,49 +193,3 @@ export default {
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
-
-/**
- * A frame's PNG only changes when the frame, the tokens or the view does, and
- * all three are in the key, so a cached one never goes stale. The Cache API is
- * per data center and a no-op on workers.dev; that only costs a re-render.
- */
-async function cachedShot(
-  ctx: ExecutionContext,
-  key: string,
-  render: () => Promise<{ png: Uint8Array; scale: 1 | 2 }>,
-): Promise<{ png: Uint8Array; scale: 1 | 2; cached: boolean }> {
-  const req = new Request(`https://png.cache.divsandspans/${key}`);
-  const hit = await caches.default.match(req);
-  if (hit) return { png: new Uint8Array(await hit.arrayBuffer()), scale: hit.headers.get("X-DS-Scale") === "1" ? 1 : 2, cached: true };
-  const shot = await render();
-  ctx.waitUntil(caches.default.put(req, new Response(shot.png, {
-    headers: { "Content-Type": "image/png", "X-DS-Scale": String(shot.scale), "Cache-Control": "public, max-age=2592000" },
-  })));
-  return { ...shot, cached: false };
-}
-
-/**
- * Analytics for one PNG request: a "png" event for the feature (copy, download
- * or zip, by whom, how many renders it took) and, when a browser was used, a
- * "browser" event for what Browser Run bills: launches and connected time.
- * Lets go of the browser too, so call done() exactly once.
- */
-function pngUsage(env: Env, ctx: ExecutionContext, request: Request, fileId: string, via: "copy" | "download" | "zip") {
-  const started = Date.now();
-  const viewer = new URL(request.url).searchParams.get("viewer");
-  const base = { fileId, country: countryOf(request), actor: viewer && /^[a-z0-9]{16}$/.test(viewer) ? viewer : "" };
-  return {
-    async done(shooter: Shooter | null, detail: string, size = 0) {
-      const stats = await shooter?.close();
-      ctx.waitUntil(track(env, { event: "png", name: via, detail, ms: Date.now() - started, size, count: stats?.renders ?? 0, ...base }));
-      if (stats) ctx.waitUntil(track(env, { event: "browser", name: stats.launched ? "launch" : "reuse", detail: via, ms: stats.ms, count: stats.renders, ...base }));
-    },
-  };
-}
-
-function shotError(e: unknown): Response {
-  const message = e instanceof Error ? e.message : String(e);
-  if (/not found/i.test(message)) return json({ error: message }, 404);
-  console.error("png", message);
-  return json({ error: `Couldn't render the image: ${message}` }, 503);
-}

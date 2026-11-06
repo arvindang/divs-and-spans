@@ -1,8 +1,7 @@
 /**
  * Device chrome (D): bezel, status bar, Dynamic Island or punch-hole, home
  * indicator. Drawn in CSS so it stays sharp at any zoom and needs no Apple
- * bezel images. The canvas (web/canvas.ts) and PNG screenshots (src/screenshot.ts)
- * both use this, so a PNG with D on matches the canvas. Environment-neutral:
+ * bezel images. Used by the canvas (web/canvas.ts). Environment-neutral:
  * plain strings only.
  *
  * Expects a `.screen` with data-kind, data-cutout, data-scheme, the `device`

@@ -4,24 +4,24 @@ import type { Env } from "./index";
  * Product analytics in Workers Analytics Engine (dataset divs_and_spans_events).
  * Every event uses the same columns so one query shape fits all of them:
  *
- *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment" | "trash"
- *   blob2 name     tool name · MCP client name · "canvas" · "web" · png "copy" | "download" | "zip" · browser "launch" | "reuse"
+ *   blob1 event    "tool" | "connect" | "session" | "create" | "export" | "comment" | "trash"
+ *   blob2 name     tool name · MCP client name · "canvas" · "web"
  *                  · comment "create" | "reply" | "resolve" | "reopen" | "edit" | "delete" (people; the agent's are tool events)
  *                  · trash "file-delete" | "file-restore" | "frame-delete" | "frame-restore" (people on the canvas)
  *   blob3 file     hashed file id ("" when there is none)
- *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, png, comment)
- *   blob5 detail   tool outcome/variant · device class · exported frame count · png "frame" | "element" | frame count | "error"
+ *   blob4 actor    MCP client (User-Agent product) · anonymous viewer id (sessions, comment)
+ *   blob5 detail   tool outcome/variant · device class · exported frame count
  *   blob6 country
- *   double1 ms     tool latency · session length · png request time · browser connected time
- *   double2        html bytes written · engaged ms · zip or png bytes
- *   double3        lint warnings · png and browser renders (0 when every PNG came from cache)
+ *   double1 ms     tool latency · session length
+ *   double2        html bytes written · engaged ms · zip bytes
+ *   double3        lint warnings
  *   index1         hashed file id, so sampling (if it ever kicks in) is per file
  *
  * File ids are capability URLs (anyone with one can edit), so they are hashed
  * before they leave the Durable Object. Frame HTML, prompts and comment text are never recorded.
  */
 export interface AnalyticsEvent {
-  event: "tool" | "connect" | "session" | "create" | "export" | "png" | "browser" | "comment" | "trash";
+  event: "tool" | "connect" | "session" | "create" | "export" | "comment" | "trash";
   name: string;
   fileId?: string;
   actor?: string;
@@ -30,8 +30,6 @@ export interface AnalyticsEvent {
   ms?: number;
   size?: number;
   warnings?: number;
-  /** double3 for events that aren't tool calls (png renders). */
-  count?: number;
 }
 
 const hashes = new Map<string, string>();
@@ -54,7 +52,7 @@ export async function track(env: Env, e: AnalyticsEvent): Promise<void> {
     const file = e.fileId ? await hashFileId(e.fileId) : "";
     env.EVENTS.writeDataPoint({
       blobs: [e.event, e.name, file, (e.actor ?? "").slice(0, 96), e.detail ?? "", e.country ?? ""],
-      doubles: [e.ms ?? 0, e.size ?? 0, e.warnings ?? e.count ?? 0],
+      doubles: [e.ms ?? 0, e.size ?? 0, e.warnings ?? 0],
       indexes: [file],
     });
   } catch {}

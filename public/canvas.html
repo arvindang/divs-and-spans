@@ -76,7 +76,7 @@
       <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0) · + and − zoom in and out"><span class="z">100%</span> <kbd class="k2">⇧0</kbd></button>
     </div>
     <div class="group">
-      <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code (E) or every frame as PNG (Shift+E)">Export <kbd>E</kbd></button>
+      <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code and tokens as a zip (E)">Export <kbd>E</kbd></button>
       <button class="btn" id="trashBtn" aria-expanded="false" aria-controls="trashPop" title="Trash: restore deleted frames, or delete this file (Shift+Backspace)">Trash <kbd class="k2">⇧⌫</kbd></button>
       <button class="btn primary" id="connectBtn">Connect</button>
     </div>
@@ -96,7 +96,6 @@
 
 <section class="pop menu" id="exportPop" hidden>
   <a class="item" id="exportZip" download>Code &amp; tokens (.zip) <kbd>E</kbd><span>Every frame as .html, tokens.css and a README for another agent</span></a>
-  <button class="item" id="exportPng">All frames as PNG (.zip) <kbd>⇧E</kbd><span>At 2x, as the canvas shows them: device, theme, bezel, height</span></button>
 </section>
 
 <section class="pop menu trash" id="trashPop" hidden>

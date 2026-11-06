@@ -356,10 +356,9 @@ function onKey(e: KeyboardEvent, down: boolean) {
     return;
   }
   if (!down) return;
-  // ⌘C copies the selection's link and ⌘⇧C its image, unless there's text highlighted to copy
-  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyC" && (targets.length || selectedFrame) && !hasTextSelection()) {
-    if (e.shiftKey) copyImage();
-    else copySelection();
+  // ⌘C copies the selection's link, unless there's text highlighted to copy
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.code === "KeyC" && (targets.length || selectedFrame) && !hasTextSelection()) {
+    copySelection();
     e.preventDefault();
     return;
   }
@@ -375,8 +374,6 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (del && selectedFrame && !targets.length) deleteFrame(selectedFrame);
   else if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if (e.code === "KeyC" && !e.shiftKey) comments.toggle();
-  else if (e.shiftKey && e.code === "KeyS" && (targets.length || selectedFrame)) savePng();
-  else if (e.shiftKey && e.code === "KeyE") savePngZip();
   else if (e.key === "Escape") {
     if (document.body.classList.contains("view-open")) closeViewSheet();
     else if (comments.escape()) {}
@@ -480,7 +477,6 @@ function renderPickBar() {
         current && linkTarget(current) ? `<button class="btn" data-pick="go" title="Go where this link leads">Go →</button>` : "",
         `<button class="btn" data-pick="multi" aria-pressed="${multi}" title="Tap more elements to add or remove them">+ Add</button>`,
         `<button class="btn" data-pick="copy">Copy</button>`,
-        `<button class="btn" data-pick="image" title="Copy the selected elements as an image">Image</button>`,
         `<button class="btn" data-pick="clear" aria-label="Clear selection">✕</button>`,
       ]
       : [];
@@ -489,7 +485,6 @@ function renderPickBar() {
   }
   const hints = [
     n ? `<kbd>${MOD}C</kbd> copy link` : "",
-    n ? `<kbd>${MOD}⇧C</kbd> copy image` : "",
     `<kbd>⇧</kbd> click to ${n ? "add or remove" : "select several"}`,
     "<kbd>⌥</kbd> click for parent",
     `<kbd>Esc</kbd> ${n ? "clear" : "done"}`,
@@ -506,98 +501,6 @@ function copySelection() {
     copy(frameIds.map((fid) => frameLink(fid, hashFor(fid))).join("\n"),
       `Copied ${frameIds.length === 1 ? "link" : `${frameIds.length} links`} to ${n} element${n === 1 ? "" : "s"}`);
   } else if (selectedFrame) copy(frameLink(selectedFrame), "Copied frame link");
-}
-
-// ---------- PNG ----------
-/** What the canvas shows right now; the server renders exactly that (src/screenshot.ts parseView). */
-function pngQuery() {
-  const d = currentDevice();
-  return new URLSearchParams({
-    w: String(d.w), h: String(d.h), kind: d.kind, radius: String(d.radius), st: String(d.safeTop), sb: String(d.safeBottom),
-    cutout: d.cutout ?? "", chrome: showChrome ? "1" : "0", full: fullHeight ? "1" : "0", theme: themeMode,
-    // for analytics only: who uses PNGs, anonymously
-    viewer: viewerId(),
-  });
-}
-/** The selection to render: an explicit frame, else the selected elements in the current one's frame, else the selected frame. */
-function imageTarget(frameId?: string) {
-  const t = targets.at(-1);
-  const fid = frameId ?? t?.frameId ?? selectedFrame;
-  if (!fid) return null;
-  const elements = !frameId && t ? targets.filter((x) => x.frameId === fid).map((x) => x.elementId) : [];
-  const f = frames.get(fid);
-  const name = f?.name ?? fid;
-  return {
-    url: `/api/files/${fileId}/frames/${fid}/png?${pngQuery()}&v=${f?.version ?? 0}&t=${tokensVersion}${elements.length ? `&el=${elements.join(",")}` : ""}`,
-    what: elements.length ? `${elements.length} element${elements.length === 1 ? "" : "s"} in ${name}` : name,
-    file: `${slug(name) || fid}${elements.length ? "-crop" : ""}.png`,
-  };
-}
-const slug = (s: string) => s.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
-const scaleNote = (scale: string | null) => (scale === "1" ? " at 1x (too tall for 2x)" : "");
-
-async function fetchPng(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
-  return { blob: await res.blob(), scale: res.headers.get("X-DS-Scale") };
-}
-function saveBlob(blob: Blob, name: string) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-}
-const pngFailed = (err: unknown) => toast(escapeHtml((err as Error).message || "Couldn't render the image"), 4000);
-
-/**
- * ⌘⇧C: copy the selection as a PNG. The clipboard write has to start inside
- * the click or key press (Safari), so it gets the render as a promise.
- */
-function copyImage(frameId?: string) {
-  const target = imageTarget(frameId);
-  if (!target) return;
-  toast("Rendering image…", 30000);
-  let scale: string | null = null;
-  const png = fetchPng(`${target.url}&via=copy`).then((r) => ((scale = r.scale), r.blob));
-  const saveInstead = () => png.then((b) => {
-    saveBlob(b, target.file);
-    toast(`Couldn't copy here, so saved ${escapeHtml(target.file)}${scaleNote(scale)} instead`, 3500);
-  }).catch(pngFailed);
-  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return void saveInstead();
-  navigator.clipboard.write([new ClipboardItem({ "image/png": png })])
-    .then(() => toast(`Copied image of ${escapeHtml(target.what)}${scaleNote(scale)}`))
-    // a render error rejects the write too; saveInstead reports it
-    .catch(saveInstead);
-}
-/** ⇧S: download the selection as a PNG. */
-async function savePng(frameId?: string) {
-  const target = imageTarget(frameId);
-  if (!target) return;
-  toast("Rendering image…", 30000);
-  try {
-    const { blob, scale } = await fetchPng(`${target.url}&via=download`);
-    saveBlob(blob, target.file);
-    toast(`Saved ${escapeHtml(target.file)}${scaleNote(scale)}`);
-  } catch (err) {
-    pngFailed(err);
-  }
-}
-/** ⇧E: every frame as a PNG, zipped. */
-async function savePngZip() {
-  closeExport();
-  const n = [...frames.values()].filter((f) => f.hasContent).length;
-  if (!n) return void toast("No frames to export yet");
-  toast(`Rendering ${n} frame${n === 1 ? "" : "s"} as PNG…`, 120000);
-  try {
-    const res = await fetch(`/api/files/${fileId}/png.zip?${pngQuery()}`);
-    if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
-    const name = res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "frames-png.zip";
-    saveBlob(await res.blob(), name);
-    toast(`Saved ${escapeHtml(name)}`);
-  } catch (err) {
-    pngFailed(err);
-  }
 }
 
 $("#pickBtn").addEventListener("click", () => setPicking(!picking));
@@ -649,7 +552,6 @@ $("#pickBar").addEventListener("click", (e) => {
     multi = !multi;
     renderPickBar();
   } else if (action === "copy") copySelection();
-  else if (action === "image") copyImage();
   else if (action === "clear") setTargets([], false);
 });
 
@@ -1023,8 +925,6 @@ function buildFrameEl(f: FrameSummary) {
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
     </div>
     <div class="frame-actions">
-      <button class="img" data-act="image" title="Copy this frame as a PNG, as the canvas shows it (${MOD}Shift+C when selected)">Copy image <kbd>${MOD}⇧C</kbd></button>
-      <button class="img" data-act="png" title="Download this frame as a PNG (Shift+S when selected)">PNG <kbd>⇧S</kbd></button>
       <button data-act="link" title="Copy frame link (${MOD}C when selected)">Copy link <kbd>${MOD}C</kbd></button>
     </div>
     <div class="frame-body"></div>
@@ -1037,8 +937,6 @@ function buildFrameEl(f: FrameSummary) {
     if (!act) return;
     e.stopPropagation();
     if (act === "link") copy(frameLink(f.id), "Copied frame link");
-    else if (act === "image") copyImage(f.id);
-    else savePng(f.id);
   });
   el.querySelector(".frame-label")!.addEventListener("click", () => select(f.id));
   el.querySelector(".frame-label")!.addEventListener("dblclick", () => focusFrame(f.id));
@@ -1059,7 +957,7 @@ function buildScreen(scheme: Scheme) {
   return s;
 }
 
-// shared with PNG screenshots; before app.css so the canvas's own shadows win
+// from src/chrome.ts; before app.css so the canvas's own shadows win
 const chromeStyle = document.createElement("style");
 chromeStyle.textContent = CHROME_CSS;
 document.head.prepend(chromeStyle);
@@ -1450,7 +1348,6 @@ $("#exportBtn").addEventListener("click", () => {
   closeTrash();
   closeViewSheet();
 });
-$("#exportPng").addEventListener("click", savePngZip);
 $("#promptEx").textContent = `${location.origin}/f/${fileId}\nDesign the home screen for …`;
 wireCopyButtons();
 
