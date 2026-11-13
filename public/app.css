@@ -192,7 +192,7 @@ select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
   gap: calc(16px / var(--z, 1));
   padding: 0 0 calc(8px / var(--z, 1));
 }
-.frame-actions button {
+.frame-actions button, .frame-actions a {
   border: 0;
   padding: 0;
   background: none;
@@ -201,7 +201,8 @@ select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
   font-size: calc(13px / var(--z, 1));
   white-space: nowrap;
 }
-.frame-actions button:hover { color: var(--accent); }
+.frame-actions a { text-decoration: none; }
+.frame-actions button:hover, .frame-actions a:hover { color: var(--accent); }
 .frame-label kbd, .frame-actions kbd {
   font: 600 0.8em var(--font);
   border: calc(1px / var(--z, 1)) solid var(--line);

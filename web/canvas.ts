@@ -81,6 +81,8 @@ const schemes = (): Scheme[] => (themeMode === "both" ? ["light", "dark"] : [the
 /** ⌘ on Apple devices, Ctrl elsewhere: the copy shortcuts follow the platform's own. */
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl+";
 const frameLink = (frameId: string, el?: string) => `${location.origin}/f/${fileId}/${frameId}${el ? `#${el}` : ""}`;
+/** The frame on its own page; with Both on, the page follows the viewer's system scheme. */
+const viewLink = (frameId: string) => `${location.origin}/f/${fileId}/${frameId}/view${themeMode === "both" ? "" : `?theme=${themeMode}`}`;
 
 // ---------- camera ----------
 function applyCamera() {
@@ -398,6 +400,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "t" || e.key === "T") setTheme(THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length]);
   else if (e.key === "[" || e.key === "]") stepDevice(e.key === "]" ? 1 : -1);
   else if (e.key === "e" || e.key === "E") $("#exportZip").click();
+  else if ((e.key === "o" || e.key === "O") && selectedFrame) window.open(viewLink(selectedFrame), "_blank", "noopener");
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
     const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
@@ -925,6 +928,7 @@ function buildFrameEl(f: FrameSummary) {
       <kbd class="key"></kbd><span class="name"></span><span class="meta"></span>
     </div>
     <div class="frame-actions">
+      <a data-act="open" target="_blank" rel="noopener" title="Open this frame on its own page to share as is (O when selected)">Open ↗ <kbd>O</kbd></a>
       <button data-act="link" title="Copy frame link (${MOD}C when selected)">Copy link <kbd>${MOD}C</kbd></button>
     </div>
     <div class="frame-body"></div>
@@ -932,6 +936,10 @@ function buildFrameEl(f: FrameSummary) {
     <i class="resize s" data-axis="s" title="Drag to resize every frame"></i>
     <i class="resize se" data-axis="se" title="Drag to resize every frame"></i>`;
   el.querySelectorAll<HTMLElement>(".resize").forEach((h) => wireResize(h, f.id));
+  const open = el.querySelector<HTMLAnchorElement>("[data-act=open]")!;
+  const syncOpen = () => (open.href = viewLink(f.id));
+  syncOpen();
+  ["pointerenter", "focus", "contextmenu"].forEach((t) => open.addEventListener(t, syncOpen));
   el.querySelector(".frame-actions")!.addEventListener("click", (e) => {
     const act = (e.target as Element).closest<HTMLElement>("[data-act]")?.dataset.act;
     if (!act) return;

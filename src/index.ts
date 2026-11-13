@@ -178,7 +178,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       });
     }
 
-    m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)\/(render|source)$/);
+    // /f/<file>/<frame>/view is the shareable alias for render
+    m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)\/(render|source)$/) ?? path.match(/^\/f\/([a-z0-9]+)\/([a-z0-9]+)\/(view)$/);
     if (m) {
       const [, fileId, frameId, kind] = m;
       const s = stub(fileId);
