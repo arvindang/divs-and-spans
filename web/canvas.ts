@@ -2,6 +2,7 @@ import { $, copy, escapeHtml, forgetFile, prefs, rememberFile, toast, viewerId, 
 import { linksIn, resolveLink } from "../src/flows";
 import { CHROME_CSS, CHROME_HTML } from "../src/chrome";
 import { initComments } from "./comments";
+import { initNotes } from "./notes";
 import { DEFAULT_BY_KIND, DEVICES, EMBED_SIZES, customDevice, deviceById, deviceForLegacyWidth, embedSizeOf, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
 
 // ---------- types (mirror src/design-file.ts) ----------
@@ -15,6 +16,7 @@ interface FrameSummary {
   foundations: boolean;
   width: number | null;
   hasContent: boolean;
+  hasNotes: boolean;
   lockExpiresAt: number | null;
   updatedAt: number;
 }
@@ -125,14 +127,19 @@ function zoomAt(clientX: number, clientY: number, nextZ: number) {
 const phone = matchMedia("(max-width: 820px)");
 const coarse = matchMedia("(pointer: coarse)");
 
+/** Room the notes panel takes on the left, its margin included. */
+const NOTES_W = 404;
+
 /** Fit a world-space rect into the viewport. */
 function fitRect(r: { x: number; y: number; w: number; h: number }, maxZ = 1) {
   const padX = Math.min(80, viewport.clientWidth * 0.05);
   // the frame label rail runs down the left edge, bezel included
-  const padLeft = Math.max(padX, 60);
+  // the notes panel covers the left edge on desktop and the bottom half on phones
+  const notesOpen = document.body.classList.contains("notes-open");
+  const padLeft = Math.max(padX, 60) + (notesOpen && !phone.matches ? NOTES_W : 0);
   // clear the bar plus the copy link on top, and the dock on phones
   const padTop = phone.matches ? $(".bar").getBoundingClientRect().bottom + 56 : 110;
-  const padBottom = phone.matches ? innerHeight - $("#tools").getBoundingClientRect().top + 16 : 60;
+  const padBottom = phone.matches ? innerHeight - $(notesOpen ? "#notesPanel" : "#tools").getBoundingClientRect().top + 16 : 60;
   // the comments panel covers the right edge on desktop
   const padRight = !phone.matches && document.body.classList.contains("commenting") ? 324 : padX;
   const vw = viewport.clientWidth - padLeft - padRight;
@@ -376,9 +383,12 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (del && selectedFrame && !targets.length) deleteFrame(selectedFrame);
   else if (e.key === "l" || e.key === "L") setPicking(!picking);
   else if (e.code === "KeyC" && !e.shiftKey) comments.toggle();
+  else if (e.code === "KeyN" && !e.shiftKey) notes.toggle();
+  else if (e.key === "Enter" && notes.edit()) {}
   else if (e.key === "Escape") {
     if (document.body.classList.contains("view-open")) closeViewSheet();
     else if (comments.escape()) {}
+    else if (notes.escape()) {}
     else if (focusedEdge) focusEdge(null);
     else if (targets.length) setTargets([], false);
     else if (picking || flowsAll) {
@@ -432,12 +442,14 @@ addEventListener("blur", () => {
 function selectAndReveal(id: string) {
   select(id);
   const r = frameEls.get(id)!.getBoundingClientRect();
+  // the notes panel covers the left edge on desktop
+  const x0 = document.body.classList.contains("notes-open") && !phone.matches ? NOTES_W + 40 : 0;
   const vw = viewport.clientWidth;
   const vh = viewport.clientHeight;
-  const xOk = r.left >= 0 && r.right <= vw;
+  const xOk = r.left >= x0 && r.right <= vw;
   const yOk = r.top >= 90 && r.top < vh * 0.8; // label clears the toolbar
   if (xOk && yOk) return;
-  if (!xOk) cam.x += r.width > vw - 80 ? 40 - r.left : vw / 2 - (r.left + r.width / 2);
+  if (!xOk) cam.x += r.width > vw - x0 - 80 ? x0 + 40 - r.left : x0 + (vw - x0) / 2 - (r.left + r.width / 2);
   if (!yOk) cam.y += 110 - r.top;
   applyCamera();
 }
@@ -449,6 +461,7 @@ function select(id: string | null) {
   const path = id ? `/f/${fileId}/${id}` : `/f/${fileId}`;
   if (location.pathname !== path) history.replaceState(null, "", path + (id && hashFor(id) ? `#${hashFor(id)}` : ""));
   scheduleFlows();
+  notes.onSelect();
 }
 
 function setPicking(on: boolean) {
@@ -573,6 +586,7 @@ const PICK_CSS = `
 html { overscroll-behavior: none; }
 html[data-ds-picking] *, html[data-ds-commenting] * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
 [data-ds-hover] { outline: 2px solid #6d5dfc !important; outline-offset: -1px !important; }
+[data-ds-noted] { outline: 2px solid #6d5dfc !important; outline-offset: 2px !important; background-color: rgb(109 93 252 / 0.12) !important; }
 [data-ds-target] { outline: 2px solid #f59e0b !important; outline-offset: 2px !important; }
 [data-ds-target] [data-ds]:not([data-ds-hover]) { outline: 1px dashed rgb(245 158 11 / 0.45) !important; outline-offset: -1px !important; }
 `;
@@ -1206,7 +1220,7 @@ function renderFrame(f: FrameSummary) {
   el.classList.toggle("has-content", f.hasContent);
   el.classList.toggle("selected", selectedFrame === f.id);
   el.querySelector(".name")!.textContent = f.name;
-  el.querySelector(".meta")!.textContent = `${f.version ? `v${f.version}` : "new"} · ${d.id === "custom" ? d.name : `${d.name} · ${d.w}`}`;
+  el.querySelector(".meta")!.textContent = `${f.version ? `v${f.version}` : "new"} · ${d.id === "custom" ? d.name : `${d.name} · ${d.w}`}${f.hasNotes ? " · notes" : ""}`;
   el.classList.toggle("dressed", showChrome && d.radius > 0);
 
   const body = el.querySelector<HTMLElement>(".frame-body")!;
@@ -1675,6 +1689,8 @@ function connect() {
       renderAll();
     } else if (msg.type === "file") {
       setName(msg.name);
+    } else if (msg.type === "notes") {
+      notes.onMessage(msg.notes);
     } else comments.onMessage(msg);
   });
   ws.addEventListener("close", () => {
@@ -1738,6 +1754,7 @@ async function load() {
   setName(file.name);
   rememberFile(file.id, file.name);
   await comments.load();
+  notes.reset();
   renderAll();
 }
 
@@ -1760,6 +1777,48 @@ const comments = initComments({
   select,
   stopPicking: () => picking && setPicking(false),
   forEachDoc: (fn) => forEachDoc((doc) => fn(doc)),
+});
+
+const notes = initNotes({
+  fileId,
+  selected: () => selectedFrame,
+  frameName: (id) => frames.get(id)?.name,
+  hasFrame: (id) => frames.has(id),
+  open: (frameId, elementId) => {
+    if (!frames.has(frameId)) return void toast("That frame isn't in this file anymore");
+    if (elementId) setTargets([{ frameId, elementId }], true);
+    else selectAndReveal(frameId);
+  },
+  hover: (frameId, elementId) =>
+    forEachDoc((doc, fid) => {
+      doc.querySelectorAll("[data-ds-noted]").forEach((n) => n.removeAttribute("data-ds-noted"));
+      if (elementId && fid === frameId) doc.querySelector(`[data-ds="${CSS.escape(elementId)}"]`)?.setAttribute("data-ds-noted", "");
+    }),
+  shown: () => {
+    // pan the selected frame out from under the panel
+    const el = selectedFrame && frameEls.get(selectedFrame);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (phone.matches) {
+      const top = $("#notesPanel").getBoundingClientRect().top;
+      if (r.top > top - 120 || r.bottom > top) focusFrame(selectedFrame!);
+    } else if (r.left < NOTES_W + 60) {
+      cam.x += NOTES_W + 60 - r.left;
+      applyCamera();
+    }
+  },
+  setHasNotes: (frameId, has) => {
+    const f = frames.get(frameId);
+    if (!f || f.hasNotes === has) return;
+    f.hasNotes = has;
+    renderFrame(f);
+  },
+});
+$("#notesSaveKey").textContent = `${MOD}↵`;
+$("#notesBtn").addEventListener("click", () => {
+  // one sheet at a time above the phone dock
+  if (!notes.on() && matchMedia("(max-width: 820px)").matches) comments.toggle(false);
+  notes.toggle();
 });
 
 applyCamera();

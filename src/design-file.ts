@@ -48,6 +48,7 @@ export interface FrameSummary {
   foundations: boolean;
   width: number | null;
   hasContent: boolean;
+  hasNotes: boolean;
   lockExpiresAt: number | null;
   updatedAt: number;
 }
@@ -101,7 +102,32 @@ type Broadcast =
   | ({ type: "file-deleted" } & TrashedFile)
   | { type: "file-restored" }
   | { type: "thread"; thread: Thread }
-  | { type: "thread-deleted"; id: string };
+  | { type: "thread-deleted"; id: string }
+  | { type: "notes"; notes: FrameNotes };
+
+// ---------- notes ----------
+
+const MAX_NOTES = 20000;
+
+/** A frame's notes: one markdown doc beside the screen that people and agents both edit. Version 0 means none yet. */
+export interface FrameNotes {
+  frameId: string;
+  body: string;
+  version: number;
+  updatedAt: number | null;
+  updatedBy: string | null;
+  updatedByKind: AuthorKind | null;
+}
+
+interface NotesRow {
+  frame_id: string;
+  body: string;
+  version: number;
+  updated_at: number;
+  updated_by: string;
+  updated_by_kind: AuthorKind;
+  [key: string]: SqlStorageValue;
+}
 
 // ---------- comments ----------
 
@@ -229,6 +255,8 @@ export class DesignFile extends DurableObject<Env> {
   private commentsReady: boolean;
   /** Same for embeds: the table appears with the first one. */
   private embedsReady: boolean;
+  /** And notes, with the first write. */
+  private notesReady: boolean;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -237,6 +265,7 @@ export class DesignFile extends DurableObject<Env> {
     this.ready = tables.has("meta");
     this.commentsReady = tables.has("threads");
     this.embedsReady = tables.has("embeds");
+    this.notesReady = tables.has("notes");
     // files made before the trash existed hard-deleted frames; give them the column (no migration layer, see createSchema)
     if (tables.has("frames") && !this.sql.exec<{ name: string }>("PRAGMA table_info(frames)").toArray().some((c) => c.name === "deleted_at")) {
       this.sql.exec("ALTER TABLE frames ADD COLUMN deleted_at INTEGER");
@@ -340,7 +369,7 @@ export class DesignFile extends DurableObject<Env> {
       frames: this.sql
         .exec<FrameRow>("SELECT * FROM frames WHERE deleted_at IS NULL ORDER BY position ASC")
         .toArray()
-        .map((r) => this.summarize(r))
+        .map((r) => this.summarize(r, this.notedFrames()))
         .sort((a, b) => Number(b.foundations) - Number(a.foundations)),
     };
   }
@@ -376,7 +405,7 @@ export class DesignFile extends DurableObject<Env> {
     return r;
   }
 
-  private summarize(r: FrameRow): FrameSummary {
+  private summarize(r: FrameRow, noted?: Set<string>): FrameSummary {
     const now = Date.now();
     const lockLive = r.status === "working" && r.lock_expires !== null && r.lock_expires > now;
     return {
@@ -390,6 +419,7 @@ export class DesignFile extends DurableObject<Env> {
       foundations: isFoundationsName(r.name),
       width: r.width,
       hasContent: r.html.length > 0,
+      hasNotes: noted ? noted.has(r.id) : this.notedFrames(r.id).size > 0,
       lockExpiresAt: lockLive ? r.lock_expires : null,
       updatedAt: r.updated_at,
     };
@@ -418,7 +448,7 @@ export class DesignFile extends DurableObject<Env> {
       name: state.name,
       tokens: this.meta("tokens")!,
       tokensVersion: state.tokensVersion,
-      frames: state.frames.filter((f) => html.has(f.id)).map((f) => ({ ...f, html: html.get(f.id)! })),
+      frames: state.frames.filter((f) => html.has(f.id)).map((f) => ({ ...f, html: html.get(f.id)!, notes: this.notes(f.id).body })),
       flows: (await this.getFlows()).flows,
     };
   }
@@ -595,6 +625,7 @@ export class DesignFile extends DurableObject<Env> {
       this.ready = false;
       this.commentsReady = false;
       this.embedsReady = false;
+      this.notesReady = false;
       return;
     }
     const gone = this.sql.exec<{ id: string }>("SELECT id FROM frames WHERE deleted_at IS NOT NULL AND deleted_at <= ?", cutoff).toArray().map((r) => r.id);
@@ -604,6 +635,7 @@ export class DesignFile extends DurableObject<Env> {
         this.sql.exec("DELETE FROM threads WHERE frame_id = ?", id);
       }
       if (this.embedsReady) this.sql.exec("DELETE FROM embeds WHERE frame_id = ?", id);
+      if (this.notesReady) this.sql.exec("DELETE FROM notes WHERE frame_id = ?", id);
       this.sql.exec("DELETE FROM frames WHERE id = ?", id);
     }
     await this.scheduleAlarm();
@@ -822,6 +854,71 @@ export class DesignFile extends DurableObject<Env> {
     return thread;
   }
 
+  // ---------- notes ----------
+
+  private ensureNotes() {
+    if (this.notesReady) return;
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS notes (
+        frame_id TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_by_kind TEXT NOT NULL
+      );
+    `);
+    this.notesReady = true;
+  }
+
+  /** Frames whose notes aren't empty (or just the one asked about). Reads never create the table. */
+  private notedFrames(frameId?: string): Set<string> {
+    if (!this.notesReady) return new Set();
+    const rows = frameId
+      ? this.sql.exec<{ frame_id: string }>("SELECT frame_id FROM notes WHERE frame_id = ? AND body != ''", frameId)
+      : this.sql.exec<{ frame_id: string }>("SELECT frame_id FROM notes WHERE body != ''");
+    return new Set(rows.toArray().map((r) => r.frame_id));
+  }
+
+  private notes(frameId: string): FrameNotes {
+    const r = this.notesReady ? this.sql.exec<NotesRow>("SELECT * FROM notes WHERE frame_id = ?", frameId).toArray()[0] : undefined;
+    return r
+      ? { frameId, body: r.body, version: r.version, updatedAt: r.updated_at, updatedBy: r.updated_by, updatedByKind: r.updated_by_kind }
+      : { frameId, body: "", version: 0, updatedAt: null, updatedBy: null, updatedByKind: null };
+  }
+
+  async getNotes(frameId: string): Promise<FrameNotes> {
+    this.requireFile();
+    this.row(frameId);
+    return this.notes(frameId);
+  }
+
+  /** Replace a frame's notes. No claim needed: notes are shared, and base_version keeps one editor from overwriting another. */
+  async writeNotes(input: { frameId: string; body: string; baseVersion?: number; by: { name: string; kind: AuthorKind } }): Promise<FrameNotes> {
+    this.requireFile();
+    const r = this.row(input.frameId);
+    const body = (input.body ?? "").replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+    if (body.length > MAX_NOTES) throw new ToolError(`Notes are limited to ${MAX_NOTES} characters.`);
+    const cur = this.notes(input.frameId);
+    if (input.baseVersion !== undefined && input.baseVersion !== cur.version) {
+      throw new ToolError(
+        `Version conflict: the notes on "${r.name}" are at v${cur.version}${cur.updatedBy ? ` (last edited by ${cur.updatedBy})` : ""}, you edited v${input.baseVersion}. Read them again and reapply your change.`,
+      );
+    }
+    if (body === cur.body) return cur;
+    this.ensureNotes();
+    const by = (input.by.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40) || "Someone";
+    const kind: AuthorKind = input.by.kind === "agent" ? "agent" : "person";
+    this.sql.exec(
+      `INSERT INTO notes (frame_id, body, version, updated_at, updated_by, updated_by_kind) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(frame_id) DO UPDATE SET body = excluded.body, version = excluded.version, updated_at = excluded.updated_at, updated_by = excluded.updated_by, updated_by_kind = excluded.updated_by_kind`,
+      input.frameId, body, cur.version + 1, Date.now(), by, kind,
+    );
+    const notes = this.notes(input.frameId);
+    this.broadcast({ type: "notes", notes });
+    return notes;
+  }
+
   // ---------- embeds ----------
   // A read-only view for Notion, Confluence and the like: one frame and the frames it links
   // to, or the whole file (frame_id FILE_EMBED). Its key never reveals the file id, which
@@ -984,7 +1081,8 @@ export class DesignFile extends DurableObject<Env> {
 
   private broadcast(msg: Broadcast) {
     const data = JSON.stringify(msg);
-    const changed = msg.type === "thread" || msg.type === "thread-deleted" ? null : `{"type":"changed"}`;
+    // embeds only show frames, so comments and notes never reach them
+    const changed = msg.type === "thread" || msg.type === "thread-deleted" || msg.type === "notes" ? null : `{"type":"changed"}`;
     for (const ws of this.ctx.getWebSockets()) {
       const embed = this.ctx.getTags(ws).includes("embed");
       if (embed && !changed) continue;

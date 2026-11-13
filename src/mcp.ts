@@ -24,7 +24,9 @@ The contract (structural only, the design itself is yours):
 
 Workflow: get_file first (it returns tokens.css and the styleguide). For each frame: start_frame (claims it and shows a working state on the canvas) → write_frame with the lock. Pass that lock to every call on a frame you've claimed, including another start_frame on it. If a link contains #<id>, it points at one element (#<id>,<id>,… points at several): get_frame returns their markup, so change those elements and leave the rest alone.
 
-Comments: people leave comment threads on elements, on spots in a frame, or on the file. get_file and get_frame list the open ones, and a link with ?c=<id> points at one thread. Read them with get_comments (it returns the pinned element's current markup). When you've addressed one, say what you changed with comment and resolve it; if it needs the person's call, reply and leave it open.`;
+Comments: people leave comment threads on elements, on spots in a frame, or on the file. get_file and get_frame list the open ones, and a link with ?c=<id> points at one thread. Read them with get_comments (it returns the pinned element's current markup). When you've addressed one, say what you changed with comment and resolve it; if it needs the person's call, reply and leave it open.
+
+Notes: every frame has a markdown notes doc beside it that people and agents both edit. It holds what the screen can't show: links to the issues it relates to, behavior and states that aren't drawn, data, decisions and open questions. Never a description of the layout; the HTML already says that. get_frame returns a frame's notes; write_notes replaces them. Draft notes when there's context worth keeping (an issue, a conversation, feedback), keep what people wrote, and read the notes before building from a design. Point at elements with [text](#<element_id>).`;
 
 const text = (value: unknown) => ({
   content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
@@ -42,7 +44,7 @@ interface ToolEvent {
 /** Errors grouped by cause, so the weekly report can tell conflicts from bad links. */
 const errorKind = (message: string) =>
   /didn't pass its lock/i.test(message) ? "no_lock"
-  : /being worked on|version conflict/i.test(message) ? "conflict"
+  : /being worked on|version conflict|already has notes/i.test(message) ? "conflict"
   : /couldn't read|file link|pass a frame link/i.test(message) ? "bad_link"
   : /not found/i.test(message) ? "not_found"
   : /was deleted/i.test(message) ? "deleted"
@@ -191,6 +193,7 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
           status: f.status,
           ...(f.task ? { working_on: f.task } : {}),
           ...(f.width ? { width: f.width } : {}),
+          ...(f.hasNotes ? { has_notes: true } : {}),
         })),
         tokens_css: tokens.css,
         foundations: foundations
@@ -228,6 +231,7 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
       const stub = stubFor(fileId);
       const frame = await stub.getFrame(frameId);
       const open = await stub.listThreads({ frameId, status: "open" });
+      const notes = await stub.getNotes(frameId);
       const resolve = (id: string) =>
         resolveElement(frame.html, id) ?? `Element ${id} no longer exists in this frame (it may have been removed in a later version).`;
       return text({
@@ -235,6 +239,9 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
         ...(elementIds.length === 1 ? { element: resolve(elementIds[0]) } : {}),
         ...(elementIds.length > 1 ? { elements: elementIds.map(resolve) } : {}),
         ...(open.length ? { open_comments: open.map((t) => threadBrief(fileId, t)) } : {}),
+        notes: notes.version
+          ? { markdown: notes.body, version: notes.version, updated_by: notes.updatedBy, updated_at: new Date(notes.updatedAt ?? 0).toISOString() }
+          : { markdown: "", version: 0, note: "No notes yet. write_notes with base_version 0 to start them." },
         html: frame.html,
       });
     }),
@@ -364,6 +371,37 @@ function buildServer(env: Env, request: Request, ctx: ExecutionContext) {
       if (!frameId) throw new Error("Pass a frame link.");
       await stubFor(fileId).deleteFrame(frameId, lock);
       return text("Deleted.");
+    }),
+  );
+
+  server.registerTool(
+    "write_notes",
+    {
+      title: "Write notes",
+      description:
+        "Replace a frame's notes: the markdown doc beside the screen that people and agents both edit. Send the whole document, not a diff. People edit notes on the canvas too, so read them with get_frame first, keep what they wrote, and pass base_version (0 for a frame without notes); the write is rejected if someone saved since. No claim needed. Empty markdown clears them.",
+      inputSchema: {
+        link: z.string().describe("Frame link"),
+        markdown: z.string().max(20000).describe("The full notes, in markdown. Point at elements with [text](#<element_id>)"),
+        base_version: z.number().int().min(0).optional().describe("The notes version you read from get_frame. Required once a frame has notes"),
+      },
+    },
+    wrap("write_notes", async ({ link, markdown, base_version }: { link: string; markdown: string; base_version?: number }, ev) => {
+      const { fileId, frameId } = parse(link);
+      if (!frameId) throw new Error("Pass a frame link: notes belong to one frame.");
+      const stub = stubFor(fileId);
+      ev.size = markdown.length;
+      if (base_version === undefined) {
+        const cur = await stub.getNotes(frameId);
+        if (cur.version) {
+          throw new Error(
+            `This frame already has notes (v${cur.version}, last edited by ${cur.updatedBy}). Read them with get_frame, keep what's there, and call again with base_version: ${cur.version}.`,
+          );
+        }
+      }
+      ev.detail = base_version ? "edit" : "new";
+      const notes = await stub.writeNotes({ frameId, body: markdown, baseVersion: base_version, by: { name: agent.name, kind: "agent" } });
+      return text({ frame_link: L.frame(fileId, frameId), notes_version: notes.version });
     }),
   );
 

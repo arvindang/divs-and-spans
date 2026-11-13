@@ -186,6 +186,24 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return json({ error: "Method not allowed" }, 405);
     }
 
+    // a frame's notes: people on the canvas. The agent's side is get_frame and write_notes.
+    m = path.match(/^\/api\/files\/([a-z0-9]+)\/frames\/([a-z0-9]+)\/notes$/);
+    if (m) {
+      const [, fileId, frameId] = m;
+      const s = stub(fileId);
+      if (request.method === "GET") return json(await s.getNotes(frameId));
+      if (request.method !== "PUT") return json({ error: "Method not allowed" }, 405);
+      const body = (await request.json().catch(() => ({}))) as { body?: string; baseVersion?: number; by?: string; viewer?: string };
+      const notes = await s.writeNotes({
+        frameId,
+        body: String(body.body ?? ""),
+        baseVersion: typeof body.baseVersion === "number" ? body.baseVersion : undefined,
+        by: { name: String(body.by ?? ""), kind: "person" },
+      });
+      ctx.waitUntil(track(env, { event: "notes", name: "edit", fileId, actor: /^[a-z0-9]{16}$/.test(body.viewer ?? "") ? body.viewer : "", detail: "person", country: countryOf(request), size: notes.body.length }));
+      return json(notes);
+    }
+
     // the file's embed (/embeds) or a frame's (/embeds/<frame>): GET reads it, POST makes it (or returns the one it has), DELETE turns it off
     m = path.match(/^\/api\/files\/([a-z0-9]+)\/embeds(?:\/([a-z0-9]+))?$/);
     if (m) {
@@ -249,7 +267,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    return json({ error: message }, /not found|invalid/i.test(message) ? 404 : /was deleted/i.test(message) ? 410 : /another browser/i.test(message) ? 403 : 400);
+    return json({ error: message }, /version conflict/i.test(message) ? 409 : /not found|invalid/i.test(message) ? 404 : /was deleted/i.test(message) ? 410 : /another browser/i.test(message) ? 403 : 400);
   }
 
   return env.ASSETS.fetch(request);

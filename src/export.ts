@@ -9,7 +9,7 @@ interface ExportInput {
   id: string;
   name: string;
   tokens: string;
-  frames: (FrameSummary & { html: string })[];
+  frames: (FrameSummary & { html: string; notes: string })[];
   flows: Flow[];
 }
 
@@ -60,11 +60,14 @@ export async function buildExport(input: ExportInput): Promise<{ zip: Uint8Array
   for (const f of input.frames) {
     const html = await rewriteFrameLinks(f.html, input.id, f.id, fileNames);
     files[fileNames.get(f.id)!] = strToU8(await renderForCanvas(html, { tokensHref: "tokens.css" }));
+    if (f.notes) files[notesName(fileNames.get(f.id)!)] = strToU8(`# ${f.name}\n\n${f.notes}\n`);
   }
 
   const zip = zipSync(Object.fromEntries(Object.entries(files).map(([name, data]) => [`${folder}/${name}`, data])), { level: 6 });
   return { zip, filename: `${folder}.zip` };
 }
+
+const notesName = (html: string) => html.replace(/\.html$/, ".notes.md");
 
 function indexHtml(input: ExportInput, fileNames: Map<string, string>): string {
   const outgoing = (id: string) =>
@@ -76,6 +79,7 @@ function indexHtml(input: ExportInput, fileNames: Map<string, string>): string {
       const links = outgoing(f.id);
       return `<li><a class="name" href="${fileNames.get(f.id)}">${escapeHtml(f.name)}</a>` +
         `<span class="meta">${f.id}${f.width ? ` · ${f.width}px` : ""}${f.foundations ? " · styleguide" : ""}</span>` +
+        (f.notes ? `<a class="meta" href="${notesName(fileNames.get(f.id)!)}">notes</a>` : "") +
         (links ? `<span class="to">→ ${links}</span>` : "") +
         `</li>`;
     })
@@ -115,7 +119,7 @@ function readme(input: ExportInput, fileNames: Map<string, string>, fileLink: st
   const pinned = input.frames.filter((f) => f.width);
 
   const frameRows = input.frames
-    .map((f) => `| ${fileNames.get(f.id)} | ${cell(f.name)} | \`${f.id}\` | ${f.width ? `${f.width}px` : "responsive"} |`)
+    .map((f) => `| ${fileNames.get(f.id)} | ${cell(f.name)} | \`${f.id}\` | ${f.width ? `${f.width}px` : "responsive"} | ${f.notes ? notesName(fileNames.get(f.id)!) : "—"} |`)
     .join("\n");
   const flowRows = input.flows
     .map((fl) => `| ${fileNames.get(fl.from)} | ${cell(fl.text)} (\`${fl.element}\`) | ${fileNames.get(fl.to)}${fl.to_element ? ` → \`${fl.to_element}\`` : ""} |`)
@@ -134,10 +138,11 @@ Anyone with that link can view and edit the design, so share it (and this README
 
 - \`tokens.css\`: the design system as CSS custom properties (color, type, spacing). Every frame links it before its own styles.
 - \`index.html\`: every frame with the screens it links to.
+- \`*.notes.md\`: a frame's notes, written by the team and agents: linked issues, behavior and states the screen can't show, decisions, open questions. Read a frame's notes before building it. \`[text](#<element id>)\` points at an element in that frame.
 ${styleguide ? `- \`${fileNames.get(styleguide.id)}\`: the styleguide (palette, type, voice, rules). Read it first.\n` : ""}
-| File | Frame | Frame id | Width |
-| --- | --- | --- | --- |
-${frameRows || "| — | no frames yet | | |"}
+| File | Frame | Frame id | Width | Notes |
+| --- | --- | --- | --- | --- |
+${frameRows || "| — | no frames yet | | | |"}
 
 ## How the frames are built
 

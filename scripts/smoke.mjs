@@ -28,7 +28,7 @@ const ok = (cond, msg) => {
 };
 
 const { tools } = await client.listTools();
-ok(tools.length === 10, `lists ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`);
+ok(tools.length === 11, `lists ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`);
 ok((client.getInstructions() || "").includes("tokens.css"), "server instructions carry the contract");
 
 const { file_link } = await call("create_file", { name: "Tidal Nocturne" });
@@ -229,6 +229,21 @@ const note = await (await api("", "POST", { body: "General: love the palette.", 
 ok(note.frameId === null && (await (await api(`/${note.id}/${note.comments[0].id}`, "DELETE", { secret: person.secret })).json()).thread === null,
   "a file-level note is deleted with its last comment");
 
+// 8. notes: one markdown doc per frame that the agent and people both edit
+const notesApi = (body) =>
+  fetch(`${base}/api/files/${fid}/frames/${claim.frame_id}/notes`, { method: body ? "PUT" : "GET", headers: { "Content-Type": "application/json", "User-Agent": "ds-test/smoke" }, body: body && JSON.stringify(body) });
+ok((await call("get_frame", { link: claim.frame_link })).notes.version === 0, "a frame starts without notes");
+const n1 = await call("write_notes", { link: claim.frame_link, markdown: `## Issue\nhttps://github.com/acme/app/issues/12\n\n- [Play](#${btnId}) starts today's episode`, base_version: 0 });
+ok(n1.notes_version === 1, "the agent drafts a frame's notes");
+ok((await call("get_file", { link: file_link })).frames.find((f) => f.id === claim.frame_id)?.has_notes, "get_file marks frames that have notes");
+const byPerson = await (await notesApi({ body: "## Issue\nhttps://github.com/acme/app/issues/12\n\n## Open questions\n- Offline?", baseVersion: 1, by: "Curious Capybara" })).json();
+ok(byPerson.version === 2 && byPerson.updatedByKind === "person", "a person edits the notes on the canvas");
+ok((await call("write_notes", { link: claim.frame_link, markdown: "overwrite" }, true)).includes("base_version: 2"), "the agent can't overwrite notes it hasn't read");
+ok((await call("write_notes", { link: claim.frame_link, markdown: "stale", base_version: 1 }, true)).includes("Version conflict"), "a stale notes write is rejected");
+ok((await notesApi({ body: "stale", baseVersion: 1, by: "Someone" })).status === 409, "a stale edit from the canvas gets a 409");
+const readNotes = (await call("get_frame", { link: claim.frame_link })).notes;
+ok(readNotes.version === 2 && readNotes.markdown.includes("Offline?") && readNotes.updated_by === "Curious Capybara", "get_frame returns the notes with who edited them");
+
 const render = await fetch(`${base}/api/files/${file_link.split("/").pop()}/frames/${claim.frame_id}/render?theme=dark`);
 const rhtml = await render.text();
 ok(render.headers.get("content-security-policy")?.includes("script-src 'none'"), "render blocks scripts via CSP");
@@ -238,6 +253,7 @@ const exp = await fetch(`${base}/api/files/${file_link.split("/").pop()}/export.
 const zip = Object.fromEntries(Object.entries(unzipSync(new Uint8Array(await exp.arrayBuffer()))).map(([k, v]) => [k.split("/").pop(), strFromU8(v)]));
 ok(exp.headers.get("content-disposition")?.includes('filename="tidal-nocturne.zip"'), "export downloads as a named zip");
 ok(["README.md", "index.html", "tokens.css", "01-00-foundations.html", "02-01-today.html", "03-02-episode.html"].every((n) => n in zip), "export has README, index, tokens and every frame in canvas order");
+ok(zip["02-01-today.notes.md"]?.includes("Offline?") && !("01-00-foundations.notes.md" in zip) && zip["README.md"].includes("02-01-today.notes.md"), "export carries each frame's notes as .notes.md");
 ok(zip["03-02-episode.html"].includes('href="02-01-today.html"') && zip["03-02-episode.html"].includes('href="tokens.css"'), "exported frames link tokens.css and each other");
 ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README lists the flows");
 
