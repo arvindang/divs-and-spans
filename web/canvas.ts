@@ -1021,6 +1021,7 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, d: Devic
     screen.style.height = `${h}px`;
     // never move a loaded iframe in the DOM: that reloads it and drops instrumentation
     instrument(next, f.id);
+    watchHeight(next, f.id);
     syncPairHeights(f.id);
     maybeInitialFocus();
   }, { once: true });
@@ -1031,33 +1032,89 @@ function loadInto(screen: HTMLElement, f: FrameSummary, scheme: Scheme, d: Devic
 /** Screen mode shows one device viewport and the document scrolls inside; full height grows to the content. */
 function frameHeight(iframe: HTMLIFrameElement, d: Device) {
   const vh = d.h;
-  if (!fullHeight) return vh;
+  const doc = iframe.contentDocument;
+  if (!fullHeight || !doc) return vh;
   iframe.style.height = `${vh}px`; // measure at device height so 100vh layouts don't feed back
-  return Math.min(12000, Math.max(vh, iframe.contentDocument?.documentElement.scrollHeight ?? vh));
+  let h = doc.documentElement.scrollHeight;
+  // app shells scroll a viewport-tall pane, not the document: grow by that pane's
+  // overflow, keeping only what the pane actually gains (a max-height list won't)
+  const pane = tallestPane(doc, vh);
+  if (pane) {
+    const extra = pane.scrollHeight - pane.clientHeight;
+    iframe.style.height = `${vh + extra}px`;
+    h = Math.max(h, vh + extra - Math.max(0, pane.scrollHeight - pane.clientHeight));
+  }
+  return Math.min(12000, Math.max(vh, h));
+}
+
+/** The scrolling pane with the most hidden content among those at least half the viewport tall. */
+function tallestPane(doc: Document, vh: number): Element | null {
+  const win = doc.defaultView;
+  if (!win || !doc.body) return null;
+  let best: Element | null = null;
+  let most = 1;
+  for (const el of doc.body.querySelectorAll("*")) {
+    const overflow = el.scrollHeight - el.clientHeight;
+    if (overflow <= most || el.clientHeight < vh / 2) continue;
+    if (!/(auto|scroll|overlay)/.test(win.getComputedStyle(el).overflowY)) continue;
+    best = el;
+    most = overflow;
+  }
+  return best;
+}
+
+/** Size one frame's loaded screens to the current device and height mode. */
+function fitFrame(id: string) {
+  const el = frameEls.get(id);
+  if (!el || !frames.has(id)) return;
+  const d = currentDevice();
+  for (const screen of el.querySelectorAll<HTMLElement>(".screen")) {
+    screen.style.width = `${d.w}px`;
+    dressScreen(screen, d);
+    const iframe = screen.querySelector<HTMLIFrameElement>("iframe:not([data-loading])");
+    if (!iframe) {
+      screen.style.height = `${d.h}px`;
+      continue;
+    }
+    iframe.style.width = `${d.w}px`;
+    applySafeArea(iframe, d);
+    const h = frameHeight(iframe, d);
+    iframe.style.height = screen.style.height = `${h}px`;
+  }
+  syncPairHeights(id);
 }
 
 /** Resize loaded frames in place (width or height mode changed) without reloading them. */
 function resizeScreens() {
-  for (const [id, el] of frameEls) {
-    const f = frames.get(id);
-    if (!f) continue;
-    const d = currentDevice();
-    for (const screen of el.querySelectorAll<HTMLElement>(".screen")) {
-      screen.style.width = `${d.w}px`;
-      dressScreen(screen, d);
-      const iframe = screen.querySelector<HTMLIFrameElement>("iframe:not([data-loading])");
-      if (!iframe) {
-        screen.style.height = `${d.h}px`;
-        continue;
-      }
-      iframe.style.width = `${d.w}px`;
-      applySafeArea(iframe, d);
-      const h = frameHeight(iframe, d);
-      iframe.style.height = screen.style.height = `${h}px`;
-    }
-    syncPairHeights(id);
-  }
+  for (const id of frameEls.keys()) fitFrame(id);
   scheduleFlows();
+}
+
+/**
+ * Content can change height after load: web fonts swap in, lazy images load once full
+ * height reveals them. Refit the frame when it does. Measuring resets the iframe to
+ * device height and back within one task, so a stable size doesn't notify again.
+ */
+function watchHeight(iframe: HTMLIFrameElement, frameId: string) {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow as (Window & typeof globalThis) | null;
+  if (!doc || !win) return;
+  let raf = 0;
+  const refit = () => {
+    if (!fullHeight || raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      if (!iframe.isConnected || iframe.dataset.loading !== undefined) return;
+      fitFrame(frameId);
+      scheduleFlows();
+    });
+  };
+  // the iframe's own ResizeObserver, so observations run with its document's rendering
+  const ro = new win.ResizeObserver(refit);
+  ro.observe(doc.documentElement);
+  if (doc.body) ro.observe(doc.body);
+  doc.fonts?.ready.then(refit);
+  doc.addEventListener("load", refit, true); // images, including lazy ones
 }
 
 // ---------- resize (Safari's responsive design mode) ----------
