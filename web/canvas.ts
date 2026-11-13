@@ -402,7 +402,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "[" || e.key === "]") stepDevice(e.key === "]" ? 1 : -1);
   else if (e.key === "e" || e.key === "E") $("#exportZip").click();
   else if ((e.key === "o" || e.key === "O") && selectedFrame) window.open(viewLink(selectedFrame), "_blank", "noopener");
-  else if ((e.key === "i" || e.key === "I") && selectedFrame) openEmbed(selectedFrame);
+  else if ((e.key === "i" || e.key === "I") && (e.shiftKey || selectedFrame)) openEmbed(e.shiftKey ? "" : selectedFrame!);
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
     const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
@@ -1413,11 +1413,7 @@ $("#exportZip").addEventListener("click", () => {
 });
 $("#exportBtn").addEventListener("click", () => {
   exportPop.hidden = !exportPop.hidden;
-  const f = selectedFrame ? frames.get(selectedFrame) : null;
-  $("#exportEmbed").toggleAttribute("aria-disabled", !f?.hasContent);
-  $("#exportEmbedNote").textContent = f?.hasContent
-    ? `“${f.name}” and the screens it links to, live and read-only, for Notion, Confluence or any page`
-    : "Select a frame first, then embed it in Notion, Confluence or any page";
+  $("#exportEmbed").toggleAttribute("aria-disabled", ![...frames.values()].some((f) => f.hasContent));
   $("#exportBtn").setAttribute("aria-expanded", String(!exportPop.hidden));
   pop.hidden = true;
   closeTrash();
@@ -1532,6 +1528,7 @@ const embedPop = $("#embedPop");
 const embedDevice = $("#embedDevice") as HTMLSelectElement;
 const embedTheme = $("#embedTheme") as HTMLSelectElement;
 const embedRevoke = $("#embedRevoke");
+/** The frame the open embed popover is for, "" for the whole file, null when it's closed. */
 let embedFor: string | null = null;
 let embedBase = "";
 function embedLink() {
@@ -1543,27 +1540,32 @@ function syncEmbed() {
   ($("#embedUrl") as HTMLInputElement).value = embedLink();
   ($("#embedPreview") as HTMLAnchorElement).href = embedLink();
 }
+const embedApi = (frameId: string) => `/api/files/${fileId}/embeds${frameId ? `/${frameId}` : ""}`;
 function closeEmbed() {
   embedPop.hidden = true;
   embedFor = null;
   delete embedRevoke.dataset.confirm;
   embedRevoke.textContent = "Turn off this embed";
 }
+/** Embed a frame and the screens it links to, or the whole file when frameId is "". */
 async function openEmbed(frameId: string) {
   if (!embedPop.hidden && embedFor === frameId) return closeEmbed();
-  const f = frames.get(frameId);
-  if (!f) return;
-  if (!f.hasContent) return toast("This frame is empty, so there's nothing to embed yet");
+  const f = frameId ? frames.get(frameId) : null;
+  if (frameId && !f) return;
+  if (f ? !f.hasContent : ![...frames.values()].some((x) => x.hasContent)) return toast(`This ${f ? "frame" : "file"} is empty, so there's nothing to embed yet`);
   pop.hidden = true;
   closeExport();
   closeTrash();
   closeViewSheet();
-  const res = await fetch(`/api/files/${fileId}/embeds/${frameId}`, { method: "POST" });
+  const res = await fetch(embedApi(frameId), { method: "POST" });
   if (!res.ok) return toast("Couldn't make an embed link. Try again.");
   closeEmbed();
   embedBase = location.origin + ((await res.json()) as { path: string }).path;
   embedFor = frameId;
-  $("#embedTitle").textContent = `Embed “${f.name}”`;
+  $("#embedTitle").textContent = f ? `Embed “${f.name}”` : "Embed this file";
+  $("#embedText").textContent = f
+    ? "people see this screen and the screens it links to, and nothing else in the file. To show every screen, use Export → Embed this file."
+    : "people step through every screen in the file, including ones added later. To show one screen and its flow, select it and press I.";
   // the same four sizes the player offers; the canvas's own model stands in for its size
   const d = currentDevice();
   const own = d.id === "custom" ? null : d;
@@ -1574,9 +1576,8 @@ async function openEmbed(frameId: string) {
   embedPop.hidden = false;
 }
 $("#exportEmbed").addEventListener("click", () => {
-  if (!selectedFrame) return toast("Select a frame first, then press <kbd>I</kbd> or choose Embed again");
   closeExport();
-  openEmbed(selectedFrame);
+  openEmbed("");
 });
 embedDevice.addEventListener("change", syncEmbed);
 embedTheme.addEventListener("change", syncEmbed);
@@ -1591,7 +1592,7 @@ embedRevoke.addEventListener("click", async () => {
     embedRevoke.textContent = "Click again: the link stops working everywhere";
     return;
   }
-  const res = await fetch(`/api/files/${fileId}/embeds/${embedFor}`, { method: "DELETE" });
+  const res = await fetch(embedApi(embedFor), { method: "DELETE" });
   closeEmbed();
   toast(res.ok ? "Embed turned off. Embedding again makes a new link." : "Couldn't turn the embed off. Try again.");
 });

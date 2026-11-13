@@ -186,10 +186,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return json({ error: "Method not allowed" }, 405);
     }
 
-    // a frame's embed: GET reads it, POST makes it (or returns the one it has), DELETE turns it off
-    m = path.match(/^\/api\/files\/([a-z0-9]+)\/embeds\/([a-z0-9]+)$/);
+    // the file's embed (/embeds) or a frame's (/embeds/<frame>): GET reads it, POST makes it (or returns the one it has), DELETE turns it off
+    m = path.match(/^\/api\/files\/([a-z0-9]+)\/embeds(?:\/([a-z0-9]+))?$/);
     if (m) {
-      const [, fileId, frameId] = m;
+      const fileId = m[1];
+      const frameId = m[2] ?? null;
       const s = stub(fileId);
       // path too: the canvas builds the link from its own origin (wrangler dev sees the custom domain here)
       const link = (key: string | null) => {
@@ -197,7 +198,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         return { url: path && `${url.origin}${path}`, path };
       };
       if (request.method === "GET") return json(link(await s.getEmbed(frameId)));
-      const note = (name: string) => ctx.waitUntil(track(env, { event: "embed", name, fileId, country: countryOf(request) }));
+      const note = (name: string) => ctx.waitUntil(track(env, { event: "embed", name, fileId, detail: frameId ? "frame" : "file", country: countryOf(request) }));
       if (request.method === "POST") {
         const had = await s.getEmbed(frameId);
         const key = had ?? (await s.createEmbed(frameId));
@@ -276,7 +277,7 @@ async function embedPage(request: Request, env: Env, ctx: ExecutionContext, s: D
   let title = "Divs & Spans";
   try {
     const state = await s.getEmbedState(key);
-    title = `${state.startName} · ${state.name}`;
+    title = state.scope === "file" ? state.name : `${state.startName} · ${state.name}`;
     ctx.waitUntil(track(env, { event: "embed", name: "view", fileId: state.fileId, detail: url.searchParams.get("device") ?? "", country: countryOf(request) }));
   } catch {} // the player explains a missing or deleted embed itself
   const page = await env.ASSETS.fetch(new Request(new URL("/embed", url), request));

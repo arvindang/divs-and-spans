@@ -9,6 +9,8 @@ const LOCK_MS = 10 * 60 * 1000;
 
 /** The canvas pings every 25s; a ping marked active (visible tab, recent input) counts as that much engaged time. */
 const PING_MS = 25 * 1000;
+/** The embeds row for a whole-file embed. Frame ids are a-z0-9, so it never collides. */
+const FILE_EMBED = "*";
 
 /** Deleted files and frames wait this long in the trash, where anyone with the link can restore them, before they're erased. */
 export const TRASH_MS = 30 * 24 * 60 * 60 * 1000;
@@ -821,8 +823,9 @@ export class DesignFile extends DurableObject<Env> {
   }
 
   // ---------- embeds ----------
-  // A read-only view of one frame and the frames it links to, for Notion, Confluence and
-  // the like. Its key never reveals the file id, which would grant edit access to everything.
+  // A read-only view for Notion, Confluence and the like: one frame and the frames it links
+  // to, or the whole file (frame_id FILE_EMBED). Its key never reveals the file id, which
+  // would grant edit access to everything.
 
   private ensureEmbeds() {
     if (this.embedsReady) return;
@@ -836,26 +839,26 @@ export class DesignFile extends DurableObject<Env> {
     this.embedsReady = true;
   }
 
-  /** The frame's embed key, or null. Never creates anything. */
-  async getEmbed(frameId: string): Promise<string | null> {
+  /** The embed key for a frame, or for the whole file when frameId is null. Never creates anything. */
+  async getEmbed(frameId: string | null): Promise<string | null> {
     this.requireFile();
-    this.row(frameId);
+    if (frameId) this.row(frameId);
     if (!this.embedsReady) return null;
-    return this.sql.exec<{ key: string }>("SELECT key FROM embeds WHERE frame_id = ?", frameId).toArray()[0]?.key ?? null;
+    return this.sql.exec<{ key: string }>("SELECT key FROM embeds WHERE frame_id = ?", frameId ?? FILE_EMBED).toArray()[0]?.key ?? null;
   }
 
-  /** One embed per frame: returns the existing key or makes one. */
-  async createEmbed(frameId: string): Promise<string> {
+  /** One embed per frame and one for the file: returns the existing key or makes one. */
+  async createEmbed(frameId: string | null): Promise<string> {
     const existing = await this.getEmbed(frameId);
     if (existing) return existing;
     this.ensureEmbeds();
     const key = newEmbedKey();
-    this.sql.exec("INSERT INTO embeds (key, frame_id, created_at) VALUES (?, ?, ?)", key, frameId, Date.now());
+    this.sql.exec("INSERT INTO embeds (key, frame_id, created_at) VALUES (?, ?, ?)", key, frameId ?? FILE_EMBED, Date.now());
     return key;
   }
 
   /** Turn an embed off: its link stops working and open players are told so. */
-  async revokeEmbed(frameId: string): Promise<void> {
+  async revokeEmbed(frameId: string | null): Promise<void> {
     const key = await this.getEmbed(frameId);
     if (!key) return;
     this.sql.exec("DELETE FROM embeds WHERE key = ?", key);
@@ -873,29 +876,31 @@ export class DesignFile extends DurableObject<Env> {
     return r.frame_id;
   }
 
-  /** What an embed may show: its frame and every frame reachable from it by flows. */
+  /** What an embed may show: every frame for a file embed, else its frame and every frame reachable from it by flows. */
   async getEmbedState(key: string) {
-    const start = this.embedStart(key);
-    const startRow = this.row(start);
-    const rows = this.sql.exec<FrameRow>("SELECT * FROM frames WHERE html != '' AND deleted_at IS NULL").toArray();
+    const scope = this.embedStart(key);
+    const file = scope === FILE_EMBED;
+    const rows = this.sql.exec<FrameRow>("SELECT * FROM frames WHERE html != '' AND deleted_at IS NULL ORDER BY position").toArray();
+    const start = file ? rows[0]?.id ?? "" : scope;
+    const startName = file ? this.meta("name")! : this.row(start).name;
     const { flows } = flowMap(this.meta("id")!, rows);
-    const reach = new Set([start]);
-    for (let grew = true; grew; ) {
+    const reach = new Set(file ? rows.map((r) => r.id) : [start]);
+    for (let grew = !file; grew; ) {
       grew = false;
       for (const f of flows) {
         if (reach.has(f.from) && !reach.has(f.to)) reach.add(f.to), (grew = true);
       }
     }
-    const order = new Map(rows.map((r) => [r.id, r.position]));
     return {
       fileId: this.meta("id")!,
       name: this.meta("name")!,
+      scope: file ? ("file" as const) : ("frame" as const),
       start,
-      startName: startRow.name,
+      startName,
       tokensVersion: Number(this.meta("tokens_version")),
       frames: rows
         .filter((r) => reach.has(r.id))
-        .sort((a, b) => (a.id === start ? -1 : b.id === start ? 1 : order.get(a.id)! - order.get(b.id)!))
+        .sort((a, b) => (a.id === start ? -1 : b.id === start ? 1 : 0))
         .map((r) => ({ id: r.id, name: r.name, version: r.version, width: r.width })),
       flows: flows.filter((f) => reach.has(f.from)).map((f) => ({ from: f.from, element: f.element, to: f.to, toElement: f.to_element ?? null })),
     };

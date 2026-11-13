@@ -17,6 +17,7 @@ interface EmbedFlow {
 }
 interface EmbedState {
   name: string;
+  scope: "file" | "frame";
   start: string;
   tokensVersion: number;
   frames: EmbedFrame[];
@@ -231,6 +232,8 @@ function render() {
   $("frameCount").textContent = n > 1 ? `${index() + 1} / ${n}` : "";
   $<HTMLButtonElement>("backBtn").disabled = index() <= 0;
   $<HTMLButtonElement>("fwdBtn").disabled = index() < 0 || index() >= n - 1;
+  // one screen: nothing to step through, so no arrows
+  $("backBtn").hidden = $("fwdBtn").hidden = n < 2;
   $("hintBtn").hidden = !state?.flows.some((fl) => frameById(fl.to));
   $("hintBtn").setAttribute("aria-pressed", String(hints));
   document.title = f && state ? `${f.name} · ${state.name}` : document.title;
@@ -263,7 +266,7 @@ async function refresh() {
     layout();
     renderSizes();
   }
-  if (!state.frames.length) return showMessage("Nothing here yet", "This frame is still being designed.");
+  if (!state.frames.length) return showMessage("Nothing here yet", state.scope === "file" ? "This file has no screens yet." : "This frame is still being designed.");
   if (!frameById(current)) go(state.start);
   else {
     load(current, true);

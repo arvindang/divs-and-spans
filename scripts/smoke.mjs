@@ -283,6 +283,17 @@ ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README li
   const closed = new Promise((r) => (ws.onclose = (e) => r(e.code)));
   ok((await eapi("DELETE")).ok && (await fetch(`${embed}/state`)).status === 404, "turning an embed off stops its link");
   ok((await closed) === 4004, "and tells open players");
+
+  // the whole file: every screen, titled after the file
+  const fapi = (method) => fetch(`${base}/api/files/${fid}/embeds`, { method, headers: { "User-Agent": "ds-test/smoke" } });
+  const fmade = await fapi("POST");
+  const { path: filePath } = await fmade.json();
+  ok(fmade.status === 201 && filePath !== embedPath && (await (await fapi("POST")).json()).path === filePath, "the file has its own embed link, one per file");
+  const fs = await (await fetch(`${base}${filePath}/state`)).json();
+  ok(fs.scope === "file" && [fnd.id, ep.id, claim.frame_id].every((id) => fs.frames.some((f) => f.id === id)) && fs.start === fs.frames[0].id,
+    "a file embed reaches every frame, starting on the first");
+  ok((await fetch(`${base}${filePath}/frames/${fnd.id}`)).ok, "and renders frames a frame embed couldn't reach");
+  ok((await fapi("DELETE")).ok && (await fetch(`${base}${filePath}/state`)).status === 404, "turning the file embed off stops its link");
 }
 
 // the file's trash: deleted files read as deleted everywhere until someone with the link restores them
