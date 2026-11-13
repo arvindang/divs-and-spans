@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { newCommentId, newFrameId, newLockToken, newThreadId } from "./ids";
+import { newCommentId, newEmbedKey, newFrameId, newLockToken, newThreadId } from "./ids";
 import { flowMap, normalizeDocument, resolveElement, stampElementIds } from "./html";
 import type { Env } from "./index";
 import { track } from "./analytics";
@@ -225,6 +225,8 @@ export class DesignFile extends DurableObject<Env> {
   private ready: boolean;
   /** Comment tables arrived after files existed, so they're created on the first comment, not in createSchema. */
   private commentsReady: boolean;
+  /** Same for embeds: the table appears with the first one. */
+  private embedsReady: boolean;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -232,6 +234,7 @@ export class DesignFile extends DurableObject<Env> {
     const tables = new Set(this.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray().map((r) => r.name));
     this.ready = tables.has("meta");
     this.commentsReady = tables.has("threads");
+    this.embedsReady = tables.has("embeds");
     // files made before the trash existed hard-deleted frames; give them the column (no migration layer, see createSchema)
     if (tables.has("frames") && !this.sql.exec<{ name: string }>("PRAGMA table_info(frames)").toArray().some((c) => c.name === "deleted_at")) {
       this.sql.exec("ALTER TABLE frames ADD COLUMN deleted_at INTEGER");
@@ -589,6 +592,7 @@ export class DesignFile extends DurableObject<Env> {
       await this.ctx.storage.deleteAll();
       this.ready = false;
       this.commentsReady = false;
+      this.embedsReady = false;
       return;
     }
     const gone = this.sql.exec<{ id: string }>("SELECT id FROM frames WHERE deleted_at IS NOT NULL AND deleted_at <= ?", cutoff).toArray().map((r) => r.id);
@@ -597,6 +601,7 @@ export class DesignFile extends DurableObject<Env> {
         this.sql.exec("DELETE FROM comments WHERE thread_id IN (SELECT id FROM threads WHERE frame_id = ?)", id);
         this.sql.exec("DELETE FROM threads WHERE frame_id = ?", id);
       }
+      if (this.embedsReady) this.sql.exec("DELETE FROM embeds WHERE frame_id = ?", id);
       this.sql.exec("DELETE FROM frames WHERE id = ?", id);
     }
     await this.scheduleAlarm();
@@ -815,13 +820,115 @@ export class DesignFile extends DurableObject<Env> {
     return thread;
   }
 
+  // ---------- embeds ----------
+  // A read-only view of one frame and the frames it links to, for Notion, Confluence and
+  // the like. Its key never reveals the file id, which would grant edit access to everything.
+
+  private ensureEmbeds() {
+    if (this.embedsReady) return;
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS embeds (
+        key TEXT PRIMARY KEY,
+        frame_id TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    this.embedsReady = true;
+  }
+
+  /** The frame's embed key, or null. Never creates anything. */
+  async getEmbed(frameId: string): Promise<string | null> {
+    this.requireFile();
+    this.row(frameId);
+    if (!this.embedsReady) return null;
+    return this.sql.exec<{ key: string }>("SELECT key FROM embeds WHERE frame_id = ?", frameId).toArray()[0]?.key ?? null;
+  }
+
+  /** One embed per frame: returns the existing key or makes one. */
+  async createEmbed(frameId: string): Promise<string> {
+    const existing = await this.getEmbed(frameId);
+    if (existing) return existing;
+    this.ensureEmbeds();
+    const key = newEmbedKey();
+    this.sql.exec("INSERT INTO embeds (key, frame_id, created_at) VALUES (?, ?, ?)", key, frameId, Date.now());
+    return key;
+  }
+
+  /** Turn an embed off: its link stops working and open players are told so. */
+  async revokeEmbed(frameId: string): Promise<void> {
+    const key = await this.getEmbed(frameId);
+    if (!key) return;
+    this.sql.exec("DELETE FROM embeds WHERE key = ?", key);
+    for (const ws of this.ctx.getWebSockets(`embed:${key}`)) {
+      try {
+        ws.close(4004, "revoked");
+      } catch {}
+    }
+  }
+
+  private embedStart(key: string): string {
+    this.requireFile();
+    const r = this.embedsReady ? this.sql.exec<{ frame_id: string }>("SELECT frame_id FROM embeds WHERE key = ?", key).toArray()[0] : undefined;
+    if (!r) throw new ToolError("Embed not found: it was turned off, or the link is wrong.");
+    return r.frame_id;
+  }
+
+  /** What an embed may show: its frame and every frame reachable from it by flows. */
+  async getEmbedState(key: string) {
+    const start = this.embedStart(key);
+    const startRow = this.row(start);
+    const rows = this.sql.exec<FrameRow>("SELECT * FROM frames WHERE html != '' AND deleted_at IS NULL").toArray();
+    const { flows } = flowMap(this.meta("id")!, rows);
+    const reach = new Set([start]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const f of flows) {
+        if (reach.has(f.from) && !reach.has(f.to)) reach.add(f.to), (grew = true);
+      }
+    }
+    const order = new Map(rows.map((r) => [r.id, r.position]));
+    return {
+      fileId: this.meta("id")!,
+      name: this.meta("name")!,
+      start,
+      startName: startRow.name,
+      tokensVersion: Number(this.meta("tokens_version")),
+      frames: rows
+        .filter((r) => reach.has(r.id))
+        .sort((a, b) => (a.id === start ? -1 : b.id === start ? 1 : order.get(a.id)! - order.get(b.id)!))
+        .map((r) => ({ id: r.id, name: r.name, version: r.version, width: r.width })),
+      flows: flows.filter((f) => reach.has(f.from)).map((f) => ({ from: f.from, element: f.element, to: f.to, toElement: f.to_element ?? null })),
+    };
+  }
+
+  /** A frame's HTML through an embed, only if the embed can reach it. */
+  async getEmbedFrame(key: string, frameId: string) {
+    const state = await this.getEmbedState(key);
+    if (!state.frames.some((f) => f.id === frameId)) throw new ToolError(`Frame ${frameId} not found in this embed.`);
+    return { html: this.row(frameId).html, tokensVersion: state.tokensVersion };
+  }
+
+  async getEmbedTokens(key: string) {
+    this.embedStart(key);
+    return this.getTokens();
+  }
+
   // ---------- live canvas ----------
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected WebSocket", { status: 426 });
     const url = new URL(request.url);
+    const embed = url.searchParams.get("embed");
+    if (embed) {
+      try {
+        this.embedStart(embed);
+      } catch (e) {
+        return new Response(e instanceof Error ? e.message : "Not found", { status: /deleted/.test(String(e)) ? 410 : 404 });
+      }
+    }
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1]);
+    // embed players get a bare "changed" signal, never comments or frame names outside their reach
+    this.ctx.acceptWebSocket(pair[1], embed ? ["embed", `embed:${embed}`] : []);
     const session: ViewerSession = {
       viewer: (url.searchParams.get("v") ?? "").replace(/[^a-z0-9]/g, "").slice(0, 32),
       device: url.searchParams.get("d") === "touch" ? "touch" : "desktop",
@@ -872,9 +979,12 @@ export class DesignFile extends DurableObject<Env> {
 
   private broadcast(msg: Broadcast) {
     const data = JSON.stringify(msg);
+    const changed = msg.type === "thread" || msg.type === "thread-deleted" ? null : `{"type":"changed"}`;
     for (const ws of this.ctx.getWebSockets()) {
+      const embed = this.ctx.getTags(ws).includes("embed");
+      if (embed && !changed) continue;
       try {
-        ws.send(data);
+        ws.send(embed ? changed! : data);
       } catch {}
     }
   }

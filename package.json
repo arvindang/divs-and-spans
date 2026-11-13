@@ -4,7 +4,7 @@
   "description": "Divs & Spans — a visual-markdown design canvas that LLMs draw on over MCP",
   "license": "FSL-1.1-ALv2",
   "scripts": {
-    "build:web": "esbuild web/canvas.ts web/home.ts --bundle --format=esm --target=es2022 --outdir=public/js",
+    "build:web": "esbuild web/canvas.ts web/home.ts web/embed.ts --bundle --format=esm --target=es2022 --outdir=public/js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc -p . && tsc -p web",

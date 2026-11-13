@@ -13,7 +13,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/f/*"]
+    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/f/*", "/e/*", "/oembed"]
   },
   "durable_objects": {
     "bindings": [{ "name": "DESIGN_FILES", "class_name": "DesignFile" }]

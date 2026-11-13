@@ -417,6 +417,7 @@ select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
   cursor: pointer;
 }
 .menu .item:hover { background: var(--panel-2); }
+.menu .item[aria-disabled] { color: var(--muted); }
 .menu .item span { grid-column: 1; color: var(--muted); font-size: 12px; }
 .menu .item kbd { grid-column: 2; grid-row: 1; align-self: center; }
 .pop p { margin: 0 0 12px; color: var(--muted); }
@@ -449,6 +450,12 @@ select.btn { appearance: none; padding-right: 10px; field-sizing: content; }
   font: 12px var(--mono);
 }
 .field .btn { border: 1px solid var(--line); }
+/* embed: link, then device/theme/iframe/preview, then turning it off */
+.embed-opts { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 14px; }
+.embed-opts .btn { border: 1px solid var(--line); }
+.pop.embed .btn.danger { color: var(--danger); padding: 0; height: auto; }
+.pop.embed .btn.danger:hover { background: none; text-decoration: underline; }
+.pop.embed .btn.danger[data-confirm] { font-weight: 600; }
 .prompt {
   font: 12px/1.5 var(--mono);
   padding: 10px;

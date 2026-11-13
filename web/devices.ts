@@ -67,3 +67,18 @@ export function customDevice(c: CustomSize): Device {
 
 /** The old width picker's values, so a saved preference carries over. */
 export const deviceForLegacyWidth = (w: number) => (w === 1024 ? "laptop" : DEFAULT_BY_KIND[kindForWidth(w)]);
+
+/**
+ * The four screen sizes an embed offers. In a scaled-down embed one phone model looks like
+ * another, so viewers switch kind; the model the embed link names stands in for its kind.
+ */
+export const EMBED_SIZES = [
+  { id: "phone", label: "Phone", fallback: "iphone-pro", icon: `<rect x="4.5" y="1.5" width="7" height="13" rx="1.6"/>` },
+  { id: "tablet", label: "Tablet", fallback: "ipad-air", icon: `<rect x="2.5" y="1.5" width="11" height="13" rx="1.4"/>` },
+  { id: "laptop", label: "Laptop", fallback: "laptop", icon: `<rect x="3" y="3" width="10" height="7" rx="1"/><path d="M1 12.5h14"/>` },
+  { id: "desktop", label: "Desktop", fallback: "desktop", icon: `<rect x="1.5" y="2" width="13" height="8.5" rx="1"/><path d="M8 10.5v3M5 13.5h6"/>` },
+] as const;
+export type EmbedSize = (typeof EMBED_SIZES)[number]["id"];
+
+export const embedSizeOf = (d: Device): EmbedSize =>
+  d.kind === "phone" ? "phone" : d.kind === "tablet" ? "tablet" : d.id === "laptop" || d.w <= 1280 ? "laptop" : "desktop";

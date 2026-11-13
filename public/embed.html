@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Divs &amp; Spans</title>
+<link rel="icon" href="/favicon.svg">
+<meta property="og:site_name" content="Divs &amp; Spans">
+<link rel="stylesheet" href="/embed.css">
+</head>
+<body>
+<main class="stage" id="stage">
+  <div class="fit" id="fit">
+    <div class="screen" id="screen"></div>
+  </div>
+  <div class="message" id="message" hidden></div>
+</main>
+<footer class="bar" id="bar">
+  <button class="btn nav" id="backBtn" disabled title="Previous screen (←)" aria-label="Previous screen"><kbd>←</kbd></button>
+  <button class="btn nav" id="fwdBtn" disabled title="Next screen (→)" aria-label="Next screen"><kbd>→</kbd></button>
+  <span class="where"><span class="name" id="frameName"></span><span class="count" id="frameCount"></span></span>
+  <!-- inline on wide embeds; the ⋯ menu on narrow ones -->
+  <div class="tools" id="tools">
+    <button class="btn" id="hintBtn" title="Show what's clickable (H)">Links <kbd>H</kbd></button>
+    <div class="sizes" id="sizes" role="radiogroup" aria-label="Screen size"></div>
+    <kbd class="hint" title="[ smaller screen · ] larger screen">[</kbd><kbd class="hint" title="[ smaller screen · ] larger screen">]</kbd>
+    <button class="btn" id="themeBtn" title="Switch light and dark (T)" aria-label="Switch light and dark"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg><span class="lbl">Light / dark</span> <kbd>T</kbd></button>
+    <button class="btn" id="expandBtn" title="Full screen (F)" aria-label="Full screen" aria-pressed="false"><svg class="grow" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="shrink" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl" id="expandLbl">Full screen</span> <kbd>F</kbd></button>
+  </div>
+  <button class="btn more" id="moreBtn" aria-expanded="false" aria-controls="tools" aria-label="More controls" title="Screen size, theme, links and full screen">⋯</button>
+  <a class="brand" href="/" target="_blank" rel="noopener" title="Made with Divs &amp; Spans">&lt;/&gt;</a>
+</footer>
+<script type="module" src="/js/embed.js"></script>
+</body>
+</html>

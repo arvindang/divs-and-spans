@@ -35,7 +35,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const res = await route(request, env, ctx);
     const path = new URL(request.url).pathname;
-    if (res.status === 101 || !(path.startsWith("/f/") || path.startsWith("/api/"))) return res;
+    if (res.status === 101 || !(path.startsWith("/f/") || path.startsWith("/api/") || path.startsWith("/e/"))) return res;
     const out = new Response(res.body, res);
     for (const [k, v] of Object.entries(PRIVATE_HEADERS)) out.headers.set(k, v);
     return out;
@@ -62,6 +62,36 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   const stub = (fileId: string) => env.DESIGN_FILES.get(env.DESIGN_FILES.idFromName(fileId));
 
   try {
+    if (path === "/oembed") return oembed(url);
+
+    // embeds: /e/<object id>/<key>. The Durable Object's own id finds the file without revealing its file id.
+    let e = path.match(/^\/e\/([0-9a-f]{64})\/([a-z0-9]{16})(?:\/(state|tokens\.css|ws|frames\/([a-z0-9]+)))?\/?$/);
+    if (e) {
+      const [, objectId, key, sub, frameId] = e;
+      let s: DurableObjectStub<DesignFile>;
+      try {
+        s = env.DESIGN_FILES.get(env.DESIGN_FILES.idFromString(objectId));
+      } catch {
+        throw new Error("Embed not found.");
+      }
+      const base = `/e/${objectId}/${key}`;
+      if (!sub) return embedPage(request, env, ctx, s, key, url);
+      if (sub === "state") {
+        const { fileId: _, ...state } = await s.getEmbedState(key);
+        return json(state);
+      }
+      if (sub === "tokens.css") {
+        const { css } = await s.getEmbedTokens(key);
+        return new Response(css, { headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-cache" } });
+      }
+      if (sub === "ws") {
+        const forward = new Request(`${url.origin}/ws?embed=${key}`, request);
+        return s.fetch(forward);
+      }
+      const { html, tokensVersion } = await s.getEmbedFrame(key, frameId);
+      return renderFrame(html, `${base}/tokens.css?v=${tokensVersion}`, url);
+    }
+
     if (path === "/api/files" && request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { name?: string };
       const id = newFileId();
@@ -156,6 +186,32 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return json({ error: "Method not allowed" }, 405);
     }
 
+    // a frame's embed: GET reads it, POST makes it (or returns the one it has), DELETE turns it off
+    m = path.match(/^\/api\/files\/([a-z0-9]+)\/embeds\/([a-z0-9]+)$/);
+    if (m) {
+      const [, fileId, frameId] = m;
+      const s = stub(fileId);
+      // path too: the canvas builds the link from its own origin (wrangler dev sees the custom domain here)
+      const link = (key: string | null) => {
+        const path = key ? `/e/${env.DESIGN_FILES.idFromName(fileId)}/${key}` : null;
+        return { url: path && `${url.origin}${path}`, path };
+      };
+      if (request.method === "GET") return json(link(await s.getEmbed(frameId)));
+      const note = (name: string) => ctx.waitUntil(track(env, { event: "embed", name, fileId, country: countryOf(request) }));
+      if (request.method === "POST") {
+        const had = await s.getEmbed(frameId);
+        const key = had ?? (await s.createEmbed(frameId));
+        if (!had) note("create");
+        return json(link(key), had ? 200 : 201);
+      }
+      if (request.method === "DELETE") {
+        await s.revokeEmbed(frameId);
+        note("revoke");
+        return json(link(null));
+      }
+      return json({ error: "Method not allowed" }, 405);
+    }
+
     m = path.match(/^\/api\/files\/([a-z0-9]+)\/tokens\.css$/);
     if (m) {
       const { css } = await stub(m[1]).getTokens();
@@ -188,24 +244,86 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         return new Response(frame.html, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
       }
       const { version } = await s.getTokens();
-      const themeParam = url.searchParams.get("theme");
-      const theme = themeParam === "light" || themeParam === "dark" ? themeParam : undefined;
-      const html = await renderForCanvas(frame.html || "<!doctype html><html><head></head><body></body></html>", {
-        tokensHref: `/api/files/${fileId}/tokens.css?v=${version}`,
-        theme,
-      });
-      return new Response(html, {
+      return renderFrame(frame.html, `/api/files/${fileId}/tokens.css?v=${version}`, url);
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return json({ error: message }, /not found|invalid/i.test(message) ? 404 : /was deleted/i.test(message) ? 410 : /another browser/i.test(message) ? 403 : 400);
+  }
+
+  return env.ASSETS.fetch(request);
+}
+
+function renderFrame(html: string, tokensHref: string, url: URL) {
+  const themeParam = url.searchParams.get("theme");
+  const theme = themeParam === "light" || themeParam === "dark" ? themeParam : undefined;
+  return renderForCanvas(html || "<!doctype html><html><head></head><body></body></html>", { tokensHref, theme }).then(
+    (out) =>
+      new Response(out, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Security-Policy": FRAME_CSP,
           "Cache-Control": "no-cache",
         },
-      });
-    }
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return json({ error: message }, /not found/i.test(message) ? 404 : /was deleted/i.test(message) ? 410 : /another browser/i.test(message) ? 403 : 400);
-  }
+      }),
+  );
+}
 
-  return env.ASSETS.fetch(request);
+const attr = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** The embed player page, titled after the frame, with oEmbed discovery so Notion and Confluence unfurl it as a live embed. */
+async function embedPage(request: Request, env: Env, ctx: ExecutionContext, s: DurableObjectStub<DesignFile>, key: string, url: URL) {
+  let title = "Divs & Spans";
+  try {
+    const state = await s.getEmbedState(key);
+    title = `${state.startName} · ${state.name}`;
+    ctx.waitUntil(track(env, { event: "embed", name: "view", fileId: state.fileId, detail: url.searchParams.get("device") ?? "", country: countryOf(request) }));
+  } catch {} // the player explains a missing or deleted embed itself
+  const page = await env.ASSETS.fetch(new Request(new URL("/embed", url), request));
+  const oembedHref = `${url.origin}/oembed?format=json&url=${encodeURIComponent(url.href)}`;
+  const out = new HTMLRewriter()
+    .on("title", { element: (el) => void el.setInnerContent(title) })
+    .on("head", {
+      element: (el) =>
+        void el.append(
+          `<meta property="og:title" content="${attr(title)}"><link rel="alternate" type="application/json+oembed" href="${attr(oembedHref)}" title="${attr(title)}">`,
+          { html: true },
+        ),
+    })
+    .transform(page);
+  const res = new Response(out.body, out);
+  res.headers.set("Cache-Control", "no-cache");
+  return res;
+}
+
+/** oEmbed (https://oembed.com) for embed links: a sized iframe of the player. */
+function oembed(url: URL): Response {
+  const target = url.searchParams.get("url") ?? "";
+  let page: URL;
+  try {
+    page = new URL(target);
+  } catch {
+    return json({ error: "Not an embed link." }, 404);
+  }
+  if (!/^\/e\/[0-9a-f]{64}\/[a-z0-9]{16}\/?$/.test(page.pathname)) return json({ error: "Not an embed link." }, 404);
+  if (url.searchParams.get("format") && url.searchParams.get("format") !== "json") return json({ error: "Only JSON." }, 501);
+  const src = `${url.origin}${page.pathname}${page.search}`;
+  const desktop = /^(laptop|desktop)$/.test(page.searchParams.get("device") ?? "");
+  const maxW = Number(url.searchParams.get("maxwidth")) || Infinity;
+  const maxH = Number(url.searchParams.get("maxheight")) || Infinity;
+  const width = Math.min(maxW, 720);
+  const height = Math.min(maxH, desktop ? Math.round(width * 0.625) + 52 : 720);
+  return new Response(
+    JSON.stringify({
+      version: "1.0",
+      type: "rich",
+      provider_name: "Divs & Spans",
+      provider_url: url.origin,
+      title: "Divs & Spans design",
+      width,
+      height,
+      html: `<iframe src="${attr(src)}" width="${width}" height="${height}" style="border:0;max-width:100%" loading="lazy" allowfullscreen></iframe>`,
+    }),
+    { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } },
+  );
 }

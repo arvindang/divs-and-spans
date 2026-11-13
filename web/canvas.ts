@@ -2,7 +2,7 @@ import { $, copy, escapeHtml, forgetFile, prefs, rememberFile, toast, viewerId, 
 import { linksIn, resolveLink } from "../src/flows";
 import { CHROME_CSS, CHROME_HTML } from "../src/chrome";
 import { initComments } from "./comments";
-import { DEFAULT_BY_KIND, DEVICES, customDevice, deviceById, deviceForLegacyWidth, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
+import { DEFAULT_BY_KIND, DEVICES, EMBED_SIZES, customDevice, deviceById, deviceForLegacyWidth, embedSizeOf, kindForWidth, type CustomSize, type Device, type DeviceKind } from "./devices";
 
 // ---------- types (mirror src/design-file.ts) ----------
 interface FrameSummary {
@@ -389,6 +389,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
     $("#connectPop").hidden = true;
     closeExport();
     closeTrash();
+    closeEmbed();
   } else if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) fitAll();
   else if (e.key === ")" || (e.shiftKey && e.code === "Digit0")) zoomAt(innerWidth / 2, innerHeight / 2, 1);
   else if (e.key === "=" || e.key === "+") zoomAt(innerWidth / 2, innerHeight / 2, cam.z * 1.25);
@@ -401,6 +402,7 @@ function onKey(e: KeyboardEvent, down: boolean) {
   else if (e.key === "[" || e.key === "]") stepDevice(e.key === "]" ? 1 : -1);
   else if (e.key === "e" || e.key === "E") $("#exportZip").click();
   else if ((e.key === "o" || e.key === "O") && selectedFrame) window.open(viewLink(selectedFrame), "_blank", "noopener");
+  else if ((e.key === "i" || e.key === "I") && selectedFrame) openEmbed(selectedFrame);
   else if (/^[0-9]$/.test(e.key) && frameOrder[+e.key]) selectAndReveal(frameOrder[+e.key]);
   else if (e.key === "Tab" && frameOrder.length) {
     const i = selectedFrame ? frameOrder.indexOf(selectedFrame) : -1;
@@ -929,6 +931,7 @@ function buildFrameEl(f: FrameSummary) {
     </div>
     <div class="frame-actions">
       <a data-act="open" target="_blank" rel="noopener" title="Open this frame on its own page to share as is (O when selected)">Open ↗ <kbd>O</kbd></a>
+      <button data-act="embed" title="Embed this frame in Notion, Confluence or any page: read-only, live, click-through (I when selected)">Embed <kbd>I</kbd></button>
       <button data-act="link" title="Copy frame link (${MOD}C when selected)">Copy link <kbd>${MOD}C</kbd></button>
     </div>
     <div class="frame-body"></div>
@@ -945,6 +948,7 @@ function buildFrameEl(f: FrameSummary) {
     if (!act) return;
     e.stopPropagation();
     if (act === "link") copy(frameLink(f.id), "Copied frame link");
+    if (act === "embed") openEmbed(f.id);
   });
   el.querySelector(".frame-label")!.addEventListener("click", () => select(f.id));
   el.querySelector(".frame-label")!.addEventListener("dblclick", () => focusFrame(f.id));
@@ -1394,6 +1398,7 @@ const togglePop = () => {
   pop.hidden = !pop.hidden;
   closeExport();
   closeTrash();
+  closeEmbed();
   closeViewSheet();
 };
 $("#connectBtn").addEventListener("click", togglePop);
@@ -1408,9 +1413,15 @@ $("#exportZip").addEventListener("click", () => {
 });
 $("#exportBtn").addEventListener("click", () => {
   exportPop.hidden = !exportPop.hidden;
+  const f = selectedFrame ? frames.get(selectedFrame) : null;
+  $("#exportEmbed").toggleAttribute("aria-disabled", !f?.hasContent);
+  $("#exportEmbedNote").textContent = f?.hasContent
+    ? `“${f.name}” and the screens it links to, live and read-only, for Notion, Confluence or any page`
+    : "Select a frame first, then embed it in Notion, Confluence or any page";
   $("#exportBtn").setAttribute("aria-expanded", String(!exportPop.hidden));
   pop.hidden = true;
   closeTrash();
+  closeEmbed();
   closeViewSheet();
 });
 $("#promptEx").textContent = `${location.origin}/f/${fileId}\nDesign the home screen for …`;
@@ -1504,6 +1515,7 @@ function closeTrash() {
 function toggleTrash() {
   const open = trashPop.hidden;
   closeExport();
+  closeEmbed();
   pop.hidden = true;
   closeViewSheet();
   if (!open) return closeTrash();
@@ -1512,6 +1524,77 @@ function toggleTrash() {
   renderTrash();
 }
 $("#trashBtn").addEventListener("click", toggleTrash);
+
+// ---------- embed ----------
+// A read-only, live player of one frame and the frames it links to, for Notion, Confluence
+// and the like. Its link carries its own key, never the file id (which would allow editing).
+const embedPop = $("#embedPop");
+const embedDevice = $("#embedDevice") as HTMLSelectElement;
+const embedTheme = $("#embedTheme") as HTMLSelectElement;
+const embedRevoke = $("#embedRevoke");
+let embedFor: string | null = null;
+let embedBase = "";
+function embedLink() {
+  const p = new URLSearchParams({ device: embedDevice.value });
+  if (embedTheme.value) p.set("theme", embedTheme.value);
+  return `${embedBase}?${p}`;
+}
+function syncEmbed() {
+  ($("#embedUrl") as HTMLInputElement).value = embedLink();
+  ($("#embedPreview") as HTMLAnchorElement).href = embedLink();
+}
+function closeEmbed() {
+  embedPop.hidden = true;
+  embedFor = null;
+  delete embedRevoke.dataset.confirm;
+  embedRevoke.textContent = "Turn off this embed";
+}
+async function openEmbed(frameId: string) {
+  if (!embedPop.hidden && embedFor === frameId) return closeEmbed();
+  const f = frames.get(frameId);
+  if (!f) return;
+  if (!f.hasContent) return toast("This frame is empty, so there's nothing to embed yet");
+  pop.hidden = true;
+  closeExport();
+  closeTrash();
+  closeViewSheet();
+  const res = await fetch(`/api/files/${fileId}/embeds/${frameId}`, { method: "POST" });
+  if (!res.ok) return toast("Couldn't make an embed link. Try again.");
+  closeEmbed();
+  embedBase = location.origin + ((await res.json()) as { path: string }).path;
+  embedFor = frameId;
+  $("#embedTitle").textContent = `Embed “${f.name}”`;
+  // the same four sizes the player offers; the canvas's own model stands in for its size
+  const d = currentDevice();
+  const own = d.id === "custom" ? null : d;
+  embedDevice.innerHTML = EMBED_SIZES.map((s) => `<option value="${own && embedSizeOf(own) === s.id ? own.id : s.fallback}">${s.label}</option>`).join("");
+  embedDevice.selectedIndex = EMBED_SIZES.findIndex((s) => s.id === embedSizeOf(d));
+  embedTheme.value = themeMode === "both" ? "" : themeMode;
+  syncEmbed();
+  embedPop.hidden = false;
+}
+$("#exportEmbed").addEventListener("click", () => {
+  if (!selectedFrame) return toast("Select a frame first, then press <kbd>I</kbd> or choose Embed again");
+  closeExport();
+  openEmbed(selectedFrame);
+});
+embedDevice.addEventListener("change", syncEmbed);
+embedTheme.addEventListener("change", syncEmbed);
+$("#embedCode").addEventListener("click", () => {
+  const desktop = deviceById(embedDevice.value)?.kind === "desktop";
+  copy(`<iframe src="${embedLink()}" width="100%" height="${desktop ? 520 : 720}" style="border:0" loading="lazy" allowfullscreen></iframe>`, "Copied the iframe tag");
+});
+embedRevoke.addEventListener("click", async () => {
+  if (!embedFor) return;
+  if (!embedRevoke.dataset.confirm) {
+    embedRevoke.dataset.confirm = "";
+    embedRevoke.textContent = "Click again: the link stops working everywhere";
+    return;
+  }
+  const res = await fetch(`/api/files/${fileId}/embeds/${embedFor}`, { method: "DELETE" });
+  closeEmbed();
+  toast(res.ok ? "Embed turned off. Embedding again makes a new link." : "Couldn't turn the embed off. Try again.");
+});
 
 // deleting the file takes a second click within a few seconds
 let armTimer = 0;

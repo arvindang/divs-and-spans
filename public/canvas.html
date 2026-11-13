@@ -76,7 +76,7 @@
       <button class="btn zoom" id="zoomLabel" title="Reset to 100% (Shift+0) · + and − zoom in and out"><span class="z">100%</span> <kbd class="k2">⇧0</kbd></button>
     </div>
     <div class="group">
-      <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code and tokens as a zip (E)">Export <kbd>E</kbd></button>
+      <button class="btn" id="exportBtn" aria-expanded="false" aria-controls="exportPop" title="Export the code and tokens as a zip (E), or embed the selected frame (I)">Export <kbd>E</kbd></button>
       <button class="btn" id="trashBtn" aria-expanded="false" aria-controls="trashPop" title="Trash: restore deleted frames, or delete this file (Shift+Backspace)">Trash <kbd class="k2">⇧⌫</kbd></button>
       <button class="btn primary" id="connectBtn">Connect</button>
     </div>
@@ -94,8 +94,26 @@
   <div class="field" style="margin:0"><a class="btn" id="tokensLink" target="_blank" rel="noopener">View tokens.css ↗</a></div>
 </section>
 
+<section class="pop embed" id="embedPop" role="dialog" aria-labelledby="embedTitle" hidden>
+  <h3 id="embedTitle">Embed</h3>
+  <p>Paste the link into Notion (<b>/embed</b>), Confluence, or anywhere that takes an iframe. It's read-only and live: people see this screen and the screens it links to, and nothing else in the file.</p>
+  <div class="field"><input id="embedUrl" readonly aria-label="Embed link"><button class="btn" data-copy="embedUrl">Copy</button></div>
+  <div class="embed-opts">
+    <select class="btn" id="embedDevice" aria-label="Screen size the embed starts on" title="Screen size the embed starts on; viewers can switch"></select>
+    <select class="btn" id="embedTheme" aria-label="Theme the embed starts in">
+      <option value="">Viewer's theme</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+    <button class="btn" id="embedCode" title="Copy an &lt;iframe&gt; tag for pages that take HTML">Copy &lt;iframe&gt;</button>
+    <a class="btn" id="embedPreview" target="_blank" rel="noopener">Preview ↗</a>
+  </div>
+  <button class="btn danger" id="embedRevoke" title="The link stops working everywhere it's embedded. Embedding again makes a new link.">Turn off this embed</button>
+</section>
+
 <section class="pop menu" id="exportPop" hidden>
   <a class="item" id="exportZip" download>Code &amp; tokens (.zip) <kbd>E</kbd><span>Every frame as .html, tokens.css and a README for another agent</span></a>
+  <button class="item" id="exportEmbed">Embed the selected frame <kbd>I</kbd><span id="exportEmbedNote">A live, read-only player for Notion, Confluence or any page</span></button>
 </section>
 
 <section class="pop menu trash" id="trashPop" hidden>

@@ -14,6 +14,7 @@ export const newElementId = () => randomId(6);
 export const newLockToken = () => randomId(20);
 export const newThreadId = () => randomId(10);
 export const newCommentId = () => randomId(10);
+export const newEmbedKey = () => randomId(16);
 
 export interface ParsedLink {
   fileId: string;

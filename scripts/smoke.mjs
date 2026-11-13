@@ -241,6 +241,50 @@ ok(["README.md", "index.html", "tokens.css", "01-00-foundations.html", "02-01-to
 ok(zip["03-02-episode.html"].includes('href="02-01-today.html"') && zip["03-02-episode.html"].includes('href="tokens.css"'), "exported frames link tokens.css and each other");
 ok(zip["README.md"].includes("| 03-02-episode.html | Replay"), "export README lists the flows");
 
+// embeds: a read-only player that reaches only its frame and the frames it links to
+{
+  const fid = fileIdOf(file_link);
+  const st = await (await fetch(`${base}/api/files/${fid}`)).json();
+  const ep = st.frames.find((f) => f.name === "02 Episode");
+  const fnd = st.frames.find((f) => f.foundations);
+  const eapi = (method) => fetch(`${base}/api/files/${fid}/embeds/${ep.id}`, { method, headers: { "User-Agent": "ds-test/smoke" } });
+  ok((await (await eapi("GET")).json()).url === null, "a frame has no embed until someone makes one");
+  const made = await eapi("POST");
+  const { url: embedUrl, path: embedPath } = await made.json();
+  const embed = `${base}${embedPath}`;
+  ok(made.status === 201 && /\/e\/[0-9a-f]{64}\/[a-z0-9]{16}$/.test(embedUrl) && embedUrl.endsWith(embedPath) && !embedUrl.includes(fid), "embedding a frame makes a link without the file id");
+  ok((await (await eapi("POST")).json()).path === embedPath, "embedding again returns the same link");
+  const es = await (await fetch(`${embed}/state`)).json();
+  ok(es.start === ep.id && es.frames.map((f) => f.id).sort().join() === [ep.id, claim.frame_id].sort().join() && !JSON.stringify(es).includes(fid),
+    "the embed reaches its frame and the frames it links to, and never names the file");
+  ok(es.flows.some((f) => f.from === ep.id && f.to === claim.frame_id && f.toElement === btnId), "the embed carries its flows");
+  const er = await fetch(`${embed}/frames/${claim.frame_id}?theme=dark`);
+  const erh = await er.text();
+  ok(er.headers.get("content-security-policy")?.includes("script-src 'none'") && erh.includes(`${new URL(embed).pathname}/tokens.css?v=`) && !erh.includes(fid),
+    "embed frames render without scripts and load tokens through the embed");
+  ok((await fetch(`${embed}/frames/${fnd.id}`)).status === 404, "frames the embed can't reach stay private");
+  ok((await fetch(`${embed}/tokens.css`)).ok, "the embed serves tokens.css");
+  const page = await fetch(`${embed}?device=iphone-pro`);
+  const ph = await page.text();
+  ok(page.ok && !page.headers.get("x-frame-options") && ph.includes("application/json+oembed") && ph.includes("02 Episode"), "the player page can be iframed and advertises oEmbed");
+  const oe = await (await fetch(`${base}/oembed?url=${encodeURIComponent(`${embed}?device=iphone-pro`)}`)).json();
+  ok(oe.type === "rich" && oe.html.includes(`${new URL(embed).pathname}?device=iphone-pro`) && oe.height === 720, "oEmbed returns a sized iframe of the player");
+  ok((await fetch(`${base}/oembed?url=${encodeURIComponent(file_link)}`)).status === 404, "oEmbed refuses file links");
+  ok((await fetch(`${embed.replace(/[a-z0-9]{16}$/, "0".repeat(16))}/state`)).status === 404, "a wrong key finds nothing");
+
+  const ws = new WebSocket(`${embed.replace(/^http/, "ws")}/ws`);
+  const got = [];
+  await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
+  ws.onmessage = (m) => got.push(String(m.data));
+  await api("", "POST", { frameId: ep.id, body: "Embed viewers shouldn't see this.", author: person });
+  await call("update_tokens", { link: file_link, css: (await call("get_file", { link: file_link })).tokens_css });
+  await new Promise((r) => setTimeout(r, 500));
+  ok(got.length === 1 && got[0] === '{"type":"changed"}', "an embed's socket hears that something changed, never the comment itself");
+  const closed = new Promise((r) => (ws.onclose = (e) => r(e.code)));
+  ok((await eapi("DELETE")).ok && (await fetch(`${embed}/state`)).status === 404, "turning an embed off stops its link");
+  ok((await closed) === 4004, "and tells open players");
+}
+
 // the file's trash: deleted files read as deleted everywhere until someone with the link restores them
 {
   const rest = (path, method = "GET") => fetch(`${base}/api/files/${fileIdOf(file_link)}${path}`, { method, headers: { "User-Agent": "ds-test/smoke" } });
